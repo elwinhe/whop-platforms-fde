@@ -50,6 +50,4 @@ US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
 
 ## Submission
 
-- Repository URL and visibility decision:
-- Written answers:
-- Loom URL:
+- Loom URL: https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
