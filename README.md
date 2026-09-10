@@ -20,6 +20,8 @@ Use sandbox credentials only. `LEDGERLY_PUBLIC_URL` must be an HTTPS tunnel/orig
 
 `.env.example` documents every variable. `LEDGERLY_SELLER_SESSIONS` is a local-demo JSON mapping from long random session tokens to server-owned `external_id`, email, and two-letter country metadata. Request bodies cannot choose another seller. Replace this static mapping with real application sessions before production.
 
+`LEDGERLY_ADMIN_TOKEN` is a separate random token of at least 24 characters for the operator view at `/accounts`. It authorizes only the connected-account overview and its hosted onboarding/payout-link actions; seller session tokens are never accepted. The overview paginates the configured platform's child companies, retrieves their current account state from Whop, and returns only a narrow display model rather than provider responses. Before creating either hosted link, the server verifies the selected account still belongs to `WHOP_PLATFORM_COMPANY_ID`. Replace this shared local-demo secret with real administrator identity and authorization before production.
+
 Grant the platform key only the actions exercised:
 
 - connected accounts/onboarding: `company:create_child`, `company:basic:read`;

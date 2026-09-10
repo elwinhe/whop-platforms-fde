@@ -51,7 +51,10 @@ export const payoutsPage = `<!doctype html>
           <a class="navbar-brand" href="/" aria-label="Ledgerly home">
             <span class="avatar avatar-sm bg-primary text-white me-2 brand-mark" aria-hidden="true">L</span>Ledgerly
           </a>
-          <span class="badge bg-yellow-lt">Sandbox</span>
+          <div class="d-flex align-items-center gap-3">
+            <a class="nav-link" href="/accounts">Connected accounts</a>
+            <span class="badge bg-yellow-lt">Sandbox</span>
+          </div>
         </div>
       </header>
       <main class="page-wrapper">

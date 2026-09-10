@@ -3,7 +3,8 @@ import { Hono, type Context } from "hono";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Webhook } from "standardwebhooks";
-import { authenticateSeller, type SellerIdentity } from "./auth.js";
+import { accountsPage } from "./accounts-page.js";
+import { authenticateAdmin, authenticateSeller, type SellerIdentity } from "./auth.js";
 import { applicationFeeMinor, COMPANY_ID, CURRENCY, currencyMinorDigits, fingerprint, isObject, majorToMinor, minorToMajor, ORDER_ID, safeProviderError } from "./domain.js";
 import { payoutsPage } from "./payouts-page.js";
 import { LedgerStore } from "./store.js";
@@ -14,6 +15,7 @@ const store = new LedgerStore();
 const MAX_BODY_BYTES = 1_048_576;
 const postJson = (data: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
 class InputError extends Error { constructor(message: string, readonly status: 400 | 413 = 400) { super(message); } }
+type AccountLinkUseCase = "account_onboarding" | "payouts_portal";
 
 function publicUrl(path: string): string {
   const base = process.env.LEDGERLY_PUBLIC_URL;
@@ -36,11 +38,17 @@ function sellerAuth(c: Context): SellerIdentity | Response {
   return authenticateSeller(c) ?? c.json({ error: "unauthorized" }, 401);
 }
 
-async function listChildren(externalId: string): Promise<Record<string, unknown>[]> {
+function adminAuth(c: Context): Response | null {
+  const result = authenticateAdmin(c);
+  if (result === "not_configured") return c.json({ error: "admin_not_configured" }, 503);
+  return result === "authenticated" ? null : c.json({ error: "unauthorized" }, 401);
+}
+
+async function listPlatformChildren(): Promise<Record<string, unknown>[]> {
   const platform = process.env.WHOP_PLATFORM_COMPANY_ID;
   if (!platform || !COMPANY_ID.test(platform)) throw new Error("WHOP_PLATFORM_COMPANY_ID is required");
   const client = createWhopSandboxClient();
-  const matches: Record<string, unknown>[] = [];
+  const companies: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   let after = "";
   do {
@@ -48,13 +56,17 @@ async function listChildren(externalId: string): Promise<Record<string, unknown>
     if (after) query.set("after", after);
     const { response, data } = await client.json(`companies?${query}`);
     if (!response.ok || !isObject(data) || !Array.isArray(data.data) || !isObject(data.page_info)) throw new Error(`Unable to list connected accounts (Whop HTTP ${response.status})`);
-    for (const item of data.data) if (isObject(item) && isObject(item.metadata) && item.metadata.external_id === externalId) matches.push(item);
+    for (const item of data.data) if (isObject(item)) companies.push(item);
     const more = data.page_info.has_next_page === true;
     after = more && typeof data.page_info.end_cursor === "string" ? data.page_info.end_cursor : "";
     if (more && (!after || seen.has(after))) throw new Error("Whop company pagination did not advance");
     if (after) seen.add(after);
   } while (after);
-  return matches;
+  return companies;
+}
+
+async function listChildren(externalId: string): Promise<Record<string, unknown>[]> {
+  return (await listPlatformChildren()).filter(item => isObject(item.metadata) && item.metadata.external_id === externalId);
 }
 
 function assertSellerMatch(candidate: Record<string, unknown>, identity: SellerIdentity): string {
@@ -65,12 +77,104 @@ function assertSellerMatch(candidate: Record<string, unknown>, identity: SellerI
 }
 
 async function assertOwnedCompany(companyId: string): Promise<void> {
-  const matches = await listChildren(store.sellerByCompanyId(companyId)?.external_id ?? "");
-  if (!matches.some(candidate => candidate.id === companyId)) throw new Error("Seller account is not a connected account of this platform");
+  if (!(await listPlatformChildren()).some(candidate => candidate.id === companyId)) throw new Error("Seller account is not a connected account of this platform");
+}
+
+function statusFrom(value: unknown): string | null {
+  return isObject(value) && typeof value.status === "string" ? value.status : null;
+}
+
+function requiredActionLabel(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!isObject(value)) return "Unknown action";
+  for (const key of ["title", "message", "description", "code", "type", "action"]) {
+    if (typeof value[key] === "string" && value[key].length) return value[key];
+  }
+  return "Unknown action";
+}
+
+function operatorAccount(company: Record<string, unknown>, account: Record<string, unknown>) {
+  if (typeof company.id !== "string" || !COMPANY_ID.test(company.id) || account.id !== company.id) throw new Error("Whop returned an invalid connected account ID");
+  const companyMetadata = isObject(company.metadata) ? company.metadata : {};
+  const accountMetadata = isObject(account.metadata) ? account.metadata : {};
+  const verification = isObject(account.verification) ? account.verification : {};
+  const capabilities = isObject(account.capabilities)
+    ? Object.entries(account.capabilities)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      .map(([name, status]) => ({ name, status }))
+      .sort((left, right) => left.name.localeCompare(right.name))
+    : null;
+  const requiredActions = Array.isArray(account.required_actions)
+    ? account.required_actions.map(requiredActionLabel)
+    : null;
+  const accountStatus = typeof account.status === "string" ? account.status : null;
+  return {
+    company_id: company.id,
+    external_id: typeof companyMetadata.external_id === "string"
+      ? companyMetadata.external_id
+      : typeof accountMetadata.external_id === "string" ? accountMetadata.external_id : null,
+    country_metadata: typeof companyMetadata.country === "string"
+      ? companyMetadata.country
+      : typeof accountMetadata.country === "string" ? accountMetadata.country : null,
+    country: typeof account.country === "string" ? account.country : null,
+    verification: {
+      individual: statusFrom(verification.individual),
+      business: statusFrom(verification.business),
+    },
+    capabilities,
+    required_actions: requiredActions,
+    suspension: {
+      status: accountStatus,
+      suspended: accountStatus === null ? null : accountStatus === "suspended",
+      reason: typeof account.status_reason === "string" ? account.status_reason : null,
+    },
+  };
+}
+
+async function loadOperatorAccounts() {
+  const companies = await listPlatformChildren();
+  const accounts: ReturnType<typeof operatorAccount>[] = [];
+  const client = createWhopSandboxClient();
+  for (let index = 0; index < companies.length; index += 8) {
+    const batch = await Promise.all(companies.slice(index, index + 8).map(async company => {
+      if (typeof company.id !== "string" || !COMPANY_ID.test(company.id)) throw new Error("Whop returned a connected company without a valid ID");
+      const { response, data } = await client.json(`accounts/${company.id}`);
+      if (!response.ok || !isObject(data)) throw new Error(`Unable to retrieve connected account ${company.id} (Whop HTTP ${response.status})`);
+      return operatorAccount(company, data);
+    }));
+    accounts.push(...batch);
+  }
+  return accounts.sort((left, right) => (left.external_id ?? left.company_id).localeCompare(right.external_id ?? right.company_id));
+}
+
+async function createOperatorAccountLink(c: Context, useCase: AccountLinkUseCase): Promise<Response> {
+  const authError = adminAuth(c); if (authError) return authError;
+  const companyId = c.req.param("companyId");
+  if (typeof companyId !== "string" || !COMPANY_ID.test(companyId)) return c.json({ error: "invalid_company_id" }, 400);
+  try {
+    const company = (await listPlatformChildren()).find(candidate => candidate.id === companyId);
+    if (!company) return c.json({ error: "account_not_connected_to_platform" }, 403);
+    const returnPath = useCase === "account_onboarding" ? "accounts?status=onboarding-returned" : "accounts?status=payouts-returned";
+    const result = await createWhopSandboxClient().json("account_links", postJson({
+      account_id: companyId,
+      use_case: useCase,
+      return_url: publicUrl(returnPath),
+      refresh_url: publicUrl(returnPath),
+    }));
+    if (!result.response.ok || !isObject(result.data) || typeof result.data.url !== "string") {
+      return c.json({ error: "whop_error", provider: safeProviderError(result.data) }, 502);
+    }
+    const url = new URL(result.data.url);
+    if (url.protocol !== "https:") throw new Error("Whop returned an invalid account link");
+    return c.json({ url: url.toString() });
+  } catch (error) {
+    return c.json({ error: "account_link_failed", message: error instanceof Error ? error.message : "Unable to create account link" }, 502);
+  }
 }
 
 app.get("/health", (c) => c.json({ status: "ok" }));
 app.get("/", (c) => c.html(payoutsPage));
+app.get("/accounts", (c) => c.html(accountsPage));
 app.get("/orders/:orderId/complete", (c) => c.redirect("/"));
 for (const path of ["/onboarding/complete", "/onboarding/refresh", "/payouts/complete", "/payouts/refresh"]) {
   app.get(path, (c) => c.redirect("/"));
@@ -81,6 +185,18 @@ app.get("/vendor/whop-elements/:file", async (c) => {
   const body = await readFile(resolve("node_modules/@whop/embedded-components-vanilla-js/dist", file), "utf8");
   return c.body(body, 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600" });
 });
+
+app.get("/api/accounts", async (c) => {
+  const authError = adminAuth(c); if (authError) return authError;
+  try {
+    return c.json({ accounts: await loadOperatorAccounts() });
+  } catch (error) {
+    return c.json({ error: "accounts_failed", message: error instanceof Error ? error.message : "Unable to load connected accounts" }, 502);
+  }
+});
+
+app.post("/api/accounts/:companyId/onboarding", (c) => createOperatorAccountLink(c, "account_onboarding"));
+app.post("/api/accounts/:companyId/payouts-portal", (c) => createOperatorAccountLink(c, "payouts_portal"));
 
 app.post("/api/onboarding", async (c) => {
   const auth = sellerAuth(c); if (auth instanceof Response) return auth;
