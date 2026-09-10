@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node --env-file-if-exists=.env dist/src/server.js",
     "reconcile": "tsx scripts/reconcile.ts",
+    "money": "node --env-file-if-exists=.env --import tsx scripts/money-flows.ts",
     "seed:sellers": "node --env-file-if-exists=.env --import tsx scripts/seed-sellers.ts"
   },
   "dependencies": {

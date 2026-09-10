@@ -4,7 +4,7 @@ Do not record API keys, webhook secrets, card details, or other credentials here
 
 ## Accounts and access
 
-Run the [Step 1 seed workflow](../README.md#step-1-reproducible-seller-setup), then record the observed IDs, duplicate response, and nested error below. Local evidence exports are ignored. Mock tests are not live API evidence; these fields remain unverified until an applied run is inspected.
+Setup: [Step 1 seed workflow](../README.md#step-1-reproducible-seller-setup). Blank fields are pending evidence.
 
 - Platform business ID:
 - US / Germany / Brazil account IDs:
@@ -12,19 +12,21 @@ Run the [Step 1 seed workflow](../README.md#step-1-reproducible-seller-setup), t
 - Least-privilege platform/per-seller key scope (no secret values):
 - Suspended-account evidence:
 
-### Sandbox placeholder-email rejection — September 9, 2026 (PDT)
+### Sandbox setup notes
 
-At 11:08 PM PDT, Whop rejected the [seed script's](../scripts/seed-sellers.ts) test email `ledgerly-seller-us@example.com` with HTTP `400` (`bad_request`):
-
-> The email you provided does not accept incoming mail. Please use a different email address.
-
-Whop requires an email that can receive mail, even in sandbox. Use an address you control when creating new sellers.
-
-The script initially missed the existing sellers because its external IDs did not match. After correcting the IDs, it reused all three accounts without creating duplicates. The placeholder emails have since been replaced by configurable receiving addresses (`SEED_SELLER_EMAIL` plus per-account overrides) that the script validates before an applied run sends anything. No creation using a configured address has been recorded yet, so the successful rerun does not prove Whop accepts them.
+Whop rejected an `example.com` address with HTTP `400`: "The email you provided does not accept incoming mail. Please use a different email address." The seed script now accepts configurable receiving addresses and reused the three existing sellers by external ID.
 
 ## Onboarding and payouts
 
-- Before/after account state:
+### Step 2: seller onboarding
+
+US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
+
+- Created an onboarding link with `POST /account_links`, seller `company_id`, and `use_case: "account_onboarding"` (HTTP `200`). Completed the hosted form and returned with `status=submitted`.
+- After: `GET /accounts/biz_q5tPMk6MCfoLOm` returned HTTP `200`: `verification.individual.status: "approved"`, `verification.business: null`, and `required_actions: []`.
+- Capabilities: card/bank payments, standard/crypto payouts, transfers, crypto/card deposits, and ads are `active`; BNPL, instant payouts, bank deposits, and card issuing are `inactive`.
+- Comparison limitation: the earlier `/companies` read returned `verified: false` but omitted these account fields. The approved after-state is confirmed; their before-state was not captured.
+
 - Embedded payouts recording:
 - Hosted payouts portal and fee-markup evidence:
 

@@ -71,3 +71,39 @@ The three payloads include `parent_company_id`, the configured receiving `email`
 Each applied run saves HTTP statuses, selected response fields, requests (including the configured email addresses), IDs, and errors under ignored `evidence/seed-sellers/`. Evidence is saved after each response and on failure. Inspect and summarize results in `docs/evidence.md`; do not commit credentials or unreviewed exports. No automatic POST retries occur. A network timeout can still leave an account created remotely: inspect the sandbox before retrying.
 
 Reuse is a serial lookup by external ID, not server-enforced idempotency. Run only one seed process at a time. Existing sellers with different external IDs will not match: inspect and adjust the fixtures before applying to a populated sandbox. Multiple matches stop the script. The duplicate probe deliberately bypasses lookup and can create an extra account; it records whether the returned ID matches. The nested probe records the exact API error and flags unexpected success or non-422 failures. A 422 still needs inspection to confirm it is specifically the nesting error. `complete` means the script finished, not that all assessment requirements were verified.
+
+## Step 3: two money flows
+
+`scripts/money-flows.ts` uses the existing sandbox client and `.env` key. Writes preview by default; add `--apply` to execute. The fixed amounts are $25 per item, $2 application fee for direct charges, and $23 for transfers (before processing fees).
+
+```sh
+npm run money -- inspect biz_BC8sRG36RkIpHk
+npm run money -- inspect biz_q5tPMk6MCfoLOm
+npm run money -- checkout direct order-us-1 --apply
+```
+
+Open the printed checkout URL and pay with sandbox card `4242 4242 4242 4242`, a future expiry, and any three-digit CVC. Find the payment ID in the seller's dashboard or `inspect` output, then:
+
+```sh
+npm run money -- inspect biz_q5tPMk6MCfoLOm pay_REPLACE
+npm run money -- inspect biz_BC8sRG36RkIpHk
+npm run money -- refund pay_REPLACE --apply
+npm run money -- inspect biz_q5tPMk6MCfoLOm pay_REPLACE
+npm run money -- inspect biz_BC8sRG36RkIpHk
+npm run money -- checkout platform order-br-1 --apply
+```
+
+Pay the platform checkout separately. Check Ledgerly's available balance in the sandbox dashboard and the Brazilian seller's transfer capability with `inspect`. Top up in the sandbox dashboard if necessary; a pending payment is not available cash. Replace `biz_BRAZIL` below with the seeded Brazilian seller ID:
+
+```sh
+npm run money -- inspect biz_BRAZIL
+npm run money -- transfer biz_BRAZIL order-br-1 --apply
+npm run money -- inspect biz_BC8sRG36RkIpHk
+npm run money -- inspect biz_BRAZIL
+```
+
+Reuse the same order reference on retries; changing it creates a new operation. Refund keys are derived from the payment ID. The script does not retry requests automatically or assert settlement from a successful HTTP response. A transfer is separately triggered and does not check whether its order was paid; inspect payment success first. It trusts the supplied Brazilian account ID, so verify it before applying.
+
+Each executed command saves selected financial fields without identity details, checkout URLs, or timestamps under ignored `evidence/money-flows/`. `inspect` reads all ledger pages, optionally retrieves a `pay_` or `tr_` resource, and preserves API amount units without conversion. Match activity by resource ID; do not sum unrelated history or assume fees are refunded. Summarize payment/refund/transfer IDs and actual ledger changes in `docs/evidence.md`. No Step 3 payment has been executed merely by adding this helper.
+
+References: [money flows](https://docs.whop.com/developer/platforms/collect-payments-for-connected-accounts), [financial activity](https://docs.whop.com/api-reference/beta/ledgers/list-financial-activity), [refunds](https://docs.whop.com/api-reference/beta/payments/refund-payment), [sandbox cards](https://docs.whop.com/developer/guides/sandbox).
