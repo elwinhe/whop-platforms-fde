@@ -97,6 +97,22 @@ export const payoutsPage = `<!doctype html>
                 </div>
               </div>
             </section>
+            <section class="card mb-4" aria-labelledby="checkout-heading">
+              <div class="card-header">
+                <h2 class="card-title" id="checkout-heading">Sandbox checkout</h2>
+              </div>
+              <div class="card-body">
+                <p class="text-secondary">Acme Preset Pack · $25 USD · $2 platform fee (8%). Uses the seller session entered above.</p>
+                <label class="form-label" for="checkout-order">Order ID</label>
+                <input class="form-control mb-3" id="checkout-order" aria-describedby="checkout-help" />
+                <p class="text-secondary small" id="checkout-help">Keep this ID when retrying. Change it only for a new order. Creating a link does not charge a card.</p>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-primary" id="checkout-create">Create $25 sandbox checkout</button>
+                  <a class="btn btn-outline-primary hidden" id="checkout-link" target="_blank" rel="noreferrer">Open sandbox checkout ↗</a>
+                </div>
+                <div id="checkout-status" class="payout-status" role="status" aria-live="polite"></div>
+              </div>
+            </section>
             <div id="elements" class="row row-cards hidden">
               <section class="col-lg-7" aria-labelledby="balance-heading">
                 <div class="card h-100">
@@ -148,6 +164,58 @@ export const payoutsPage = `<!doctype html>
       const portal = document.querySelector('#portal');
       let session;
 
+      const checkoutButton = document.querySelector('#checkout-create');
+      const checkoutOrder = document.querySelector('#checkout-order');
+      const checkoutLink = document.querySelector('#checkout-link');
+      const checkoutStatus = document.querySelector('#checkout-status');
+      checkoutOrder.value = 'demo-' + crypto.randomUUID();
+      const clearCheckout = () => {
+        checkoutLink.classList.add('hidden');
+        checkoutLink.removeAttribute('href');
+        checkoutStatus.textContent = '';
+      };
+      tokenInput.addEventListener('input', clearCheckout);
+      checkoutOrder.addEventListener('input', clearCheckout);
+      checkoutButton.addEventListener('click', async () => {
+        clearCheckout();
+        checkoutStatus.className = 'payout-status';
+        if (!tokenInput.value.trim()) {
+          checkoutStatus.textContent = 'Enter your seller session token above first.';
+          return;
+        }
+        checkoutButton.disabled = checkoutOrder.disabled = tokenInput.disabled = load.disabled = true;
+        checkoutStatus.textContent = 'Creating sandbox checkout…';
+        try {
+          const response = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + tokenInput.value,
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              order_id: checkoutOrder.value.trim(),
+              amount_minor: 2500,
+              currency: 'usd',
+              title: 'Acme Preset Pack',
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || data.provider?.message || data.error || 'Checkout failed.');
+          const url = new URL(data.checkout?.purchase_url);
+          if (url.protocol !== 'https:' || url.hostname !== 'sandbox.whop.com')
+            throw new Error('No valid sandbox checkout URL returned.');
+          checkoutLink.href = url.href;
+          checkoutLink.classList.remove('hidden');
+          checkoutStatus.textContent = 'Checkout ready: $25 USD with a $2 platform fee. Open the link to pay with a sandbox card.';
+        } catch (error) {
+          checkoutStatus.className = 'payout-status error';
+          checkoutStatus.textContent = error instanceof Error ? error.message : 'Unable to create checkout.';
+        } finally {
+          checkoutButton.disabled = checkoutOrder.disabled = tokenInput.disabled = load.disabled = false;
+        }
+      });
+
       load.addEventListener('click', async () => {
         const sellerToken = tokenInput.value;
         async function request(url, options = {}) {
@@ -170,6 +238,7 @@ export const payoutsPage = `<!doctype html>
         }
 
         load.disabled = true;
+        checkoutButton.disabled = true;
         tokenInput.disabled = true;
         status.className = 'payout-status';
         status.textContent = 'Connecting your seller account…';
@@ -232,6 +301,7 @@ export const payoutsPage = `<!doctype html>
           elements.classList.add('hidden');
         } finally {
           load.disabled = false;
+          checkoutButton.disabled = false;
           tokenInput.disabled = false;
         }
       });
