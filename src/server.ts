@@ -190,7 +190,7 @@ app.post("/api/webhook", async (c) => {
   const raw = await c.req.text(); if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return c.json({ error: "payload_too_large" }, 413);
   const secret = process.env.WHOP_WEBHOOK_SECRET; if (!secret) return c.json({ error: "webhook_not_configured" }, 503);
   const headers = { "webhook-id": c.req.header("webhook-id") ?? "", "webhook-timestamp": c.req.header("webhook-timestamp") ?? "", "webhook-signature": c.req.header("webhook-signature") ?? "" };
-  try { new Webhook(secret).verify(raw, headers); } catch { return c.json({ error: "invalid_signature" }, 401); }
+  try { new Webhook(secret, secret.startsWith("ws_") ? { format: "raw" } : undefined).verify(raw, headers); } catch { return c.json({ error: "invalid_signature" }, 401); }
   let value: unknown; try { value = JSON.parse(raw); } catch { return c.json({ error: "invalid_json" }, 400); }
   if (!isObject(value) || typeof value.type !== "string") return c.json({ error: "invalid_event" }, 400);
   const bodyEventId = typeof value.id === "string" ? value.id : "";

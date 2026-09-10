@@ -69,7 +69,7 @@ async function main() {
   if ((group === "account" || group === "key" || group === "markup") && one) await assertConnectedSeller(one);
   const userToken = group === "key" ? process.env.WHOP_USER_TOKEN : undefined;
   if (group === "key" && !userToken) throw new Error("WHOP_USER_TOKEN is required: Whop does not allow API keys to create API keys");
-  const { response, data } = await createWhopSandboxClient(userToken ? { bearerToken: userToken } : {}).json(path, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `ledgerly-${group}-${action}-${one ?? "platform"}` }, body: JSON.stringify(body) });
+  const { response, data } = await createWhopSandboxClient(userToken ? { bearerToken: userToken } : {}).json(path, { method: "POST", headers: { "Content-Type": "application/json", "Api-Version-Date": "2026-09-09", "Idempotency-Key": `ledgerly-${group}-${action}-${one ?? "platform"}` }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`Whop HTTP ${response.status}: ${JSON.stringify(safeProviderError(data))}`);
   if (group === "key" && isObject(data) && typeof data.secret_key === "string") {
     const output = resolve("evidence/api-keys", `${one}.json`);

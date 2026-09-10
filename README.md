@@ -28,7 +28,7 @@ Grant the platform key only the actions exercised:
 - reconciliation: `payment:basic:read`, `payout:transfer:read`;
 - operations as needed: `developer:manage_webhook`, `company:suspend_child`, `developer:manage_api_key`, `company:update_child_fees`.
 
-`WHOP_WEBHOOK_SECRET` is the `whsec_` Standard Webhooks secret, not the platform API key.
+`WHOP_WEBHOOK_SECRET` is the signing secret returned by Whop, not the platform API key. Whop's `ws_` secrets use raw-key verification; `whsec_` secrets use Standard Webhooks' base64 format.
 
 ## Seller HTTP flow
 
