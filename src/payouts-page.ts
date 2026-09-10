@@ -163,6 +163,7 @@ export const payoutsPage = `<!doctype html>
       const elements = document.querySelector('#elements');
       const portal = document.querySelector('#portal');
       let session;
+      let loadAttempt = 0;
 
       const checkoutButton = document.querySelector('#checkout-create');
       const checkoutOrder = document.querySelector('#checkout-order');
@@ -217,7 +218,19 @@ export const payoutsPage = `<!doctype html>
       });
 
       load.addEventListener('click', async () => {
+        const attempt = ++loadAttempt;
         const sellerToken = tokenInput.value;
+        const readySlots = new Set();
+        let payoutError = '';
+        const updateStatus = () => {
+          if (attempt !== loadAttempt) return;
+          status.className = payoutError ? 'payout-status error' : 'payout-status';
+          status.textContent = payoutError
+            ? payoutError + (portal.hasAttribute('href') ? ' Open the hosted portal to continue.' : '')
+            : readySlots.size === 3
+              ? 'Payout controls loaded.'
+              : 'Loading payout controls (' + readySlots.size + '/3 ready)…';
+        };
         async function request(url, options = {}) {
           const response = await fetch(url, {
             ...options,
@@ -250,30 +263,35 @@ export const payoutsPage = `<!doctype html>
           session?.destroy();
           session = undefined;
           const profile = await request('/api/payout-context');
-          try {
-            const link = await request('/api/payout-portal', { method: 'POST' });
-            const url = new URL(link.url);
-            if (url.protocol !== 'https:') throw new Error('Invalid portal URL');
-            portal.href = url.href;
-            portal.classList.remove('hidden');
-          } catch {
-            status.textContent = 'Hosted portal unavailable. Loading embedded payouts…';
-          }
+          updateStatus();
+          void request('/api/payout-portal', { method: 'POST' })
+            .then((link) => {
+              if (attempt !== loadAttempt) return;
+              const url = new URL(link.url);
+              if (url.protocol !== 'https:') throw new Error('Invalid portal URL');
+              portal.href = url.href;
+              portal.classList.remove('hidden');
+              updateStatus();
+            })
+            .catch(() => {
+              if (attempt !== loadAttempt) return;
+              portal.classList.add('hidden');
+              portal.removeAttribute('href');
+            });
 
           const { loadWhopElements } = await import('/vendor/whop-elements/index.mjs');
           const whop = await loadWhopElements({ environment: 'sandbox' });
           if (!whop) throw new Error('Whop Elements is unavailable.');
-          let ready = 0;
           const onReady = (slot) => () => {
+            if (attempt !== loadAttempt) return;
             document.querySelector(slot + '-loading')?.classList.add('hidden');
-            ready += 1;
-            if (ready === 3) status.textContent = 'Payout controls loaded.';
+            readySlots.add(slot);
+            updateStatus();
           };
           const onError = () => {
-            status.className = 'payout-status error';
-            status.textContent = portal.hasAttribute('href')
-              ? 'Embedded payouts could not load. Open the hosted portal to continue.'
-              : 'Payouts could not load. Please try connecting again.';
+            if (attempt !== loadAttempt) return;
+            payoutError = 'Embedded payouts could not load. Please try connecting again.';
+            updateStatus();
           };
           session = whop.createPayoutsSession({
             companyId: profile.company_id,
@@ -294,10 +312,8 @@ export const payoutsPage = `<!doctype html>
         } catch (error) {
           session?.destroy();
           session = undefined;
-          status.className = 'payout-status error';
-          status.textContent =
-            (error instanceof Error ? error.message : 'Unable to load payouts.') +
-            (portal.hasAttribute('href') ? ' Open the hosted portal to continue.' : '');
+          payoutError = error instanceof Error ? error.message : 'Unable to load payouts.';
+          updateStatus();
           elements.classList.add('hidden');
         } finally {
           load.disabled = false;
