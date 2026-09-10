@@ -4,6 +4,8 @@ Do not record API keys, webhook secrets, card details, or other credentials here
 
 ## Accounts and access
 
+Run the [Step 1 seed workflow](../README.md#step-1-reproducible-seller-setup), then record the observed IDs, duplicate response, and nested error below. Local evidence exports are ignored. Mock tests are not live API evidence; these fields remain unverified until an applied run is inspected.
+
 - Platform business ID:
 - US / Germany / Brazil account IDs:
 - Duplicate and nested-account probe evidence:
