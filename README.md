@@ -1,6 +1,6 @@
 # Ledgerly × Whop platform scaffold
 
-Minimal Node 22/TypeScript starting point for the Ledgerly Platforms FDE assessment. It runs locally, serves a health check and a future payouts page, and deliberately performs **no** account, payment, payout, or webhook business logic yet. Every financial route returns `501 Not Implemented`; the webhook route must not acknowledge success until signature verification and durable event persistence exist.
+Minimal Node 22/TypeScript starting point for the Ledgerly Platforms FDE assessment. It runs locally, serves a health check and a future payouts page, and provides a sandbox seller seed script. Every financial route returns `501 Not Implemented`; the webhook route must not acknowledge success until signature verification and durable event persistence exist.
 
 ## Run locally
 
@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-Copy `.env.example` to `.env` only when sandbox calls are implemented. The generic wrapper is locked to `https://sandbox-api.whop.com/api/v1/`, uses built-in `fetch`, requires `WHOP_API_KEY`, and applies a timeout. See only the [official Whop documentation](https://docs.whop.com/) before adding endpoint-specific behavior.
+Copy `.env.example` to `.env` to configure sandbox calls. The generic wrapper is locked to `https://sandbox-api.whop.com/api/v1/`, uses built-in `fetch`, requires `WHOP_API_KEY`, and applies a timeout. See only the [official Whop documentation](https://docs.whop.com/) before adding endpoint-specific behavior.
 
 Available scripts: `dev`, `typecheck`, `build`, `start`, and `reconcile` (the last intentionally exits nonzero until implemented).
 
@@ -55,3 +55,19 @@ sequenceDiagram
 - [ ] Reconcile the current private-repository preference with the assessment's public-repository submission requirement before submitting.
 
 Templates live in [`docs/answers.md`](docs/answers.md) and [`docs/evidence.md`](docs/evidence.md).
+
+## Step 1: reproducible seller setup
+
+Set `WHOP_PLATFORM_COMPANY_ID=biz_BC8sRG36RkIpHk`, your sandbox `WHOP_API_KEY`, and `SEED_SELLER_EMAIL` in the ignored `.env`. `SEED_SELLER_EMAIL` must be a mailbox you control: Whop rejects addresses that cannot receive mail, even in sandbox (see [`docs/evidence.md`](docs/evidence.md)). `SEED_SELLER_EMAIL_US`, `SEED_SELLER_EMAIL_DE`, `SEED_SELLER_EMAIL_BR`, and `SEED_SELLER_EMAIL_NESTED` optionally override individual accounts, for example with plus-addressed variants of one inbox. An applied run validates every address it might submit before sending any request, and refuses reserved domains such as `example.com` locally. The platform and key are created manually. For this script, select `company:create_child` and `company:basic:read` in the sandbox key UI; balance-read is not used here.
+
+```sh
+npm run seed:sellers                  # Preview; no key or network required
+npm run seed:sellers -- --apply       # List all children, reuse or create US/DE/BR
+npm run seed:sellers -- --apply --probe # Also repeat US creation and attempt nesting
+```
+
+The three payloads include `parent_company_id`, the configured receiving `email` (the preview prints the resolved address, or `<SEED_SELLER_EMAIL>` when unset), and stable `metadata.external_id`. Country codes are stored as descriptive metadata, not verified legal/payout country. Complete real country selection through onboarding; this seed alone does not prove country eligibility. See [Whop enrollment](https://docs.whop.com/developer/platforms/enroll-connected-accounts) and [company listing](https://docs.whop.com/api-reference/companies/list-companies).
+
+Each applied run saves HTTP statuses, selected response fields, requests (including the configured email addresses), IDs, and errors under ignored `evidence/seed-sellers/`. Evidence is saved after each response and on failure. Inspect and summarize results in `docs/evidence.md`; do not commit credentials or unreviewed exports. No automatic POST retries occur. A network timeout can still leave an account created remotely: inspect the sandbox before retrying.
+
+Reuse is a serial lookup by external ID, not server-enforced idempotency. Run only one seed process at a time. Existing sellers with different external IDs will not match: inspect and adjust the fixtures before applying to a populated sandbox. Multiple matches stop the script. The duplicate probe deliberately bypasses lookup and can create an extra account; it records whether the returned ID matches. The nested probe records the exact API error and flags unexpected success or non-422 failures. A 422 still needs inspection to confirm it is specifically the nesting error. `complete` means the script finished, not that all assessment requirements were verified.
