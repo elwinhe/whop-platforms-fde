@@ -87,10 +87,7 @@ export const payoutsPage = `<!doctype html>
                     class="btn btn-outline-primary hidden"
                     target="_blank"
                     rel="noreferrer"
-                  >Open hosted portal ↗</a>
-                </div>
-                <div class="form-hint" id="session-help">
-                  Use your Ledgerly session token to access this sandbox account.
+                  >Whop portal ↗</a>
                 </div>
                 <div id="status" class="payout-status" role="status" aria-live="polite">
                   Connect an account to view its payout details.
@@ -104,7 +101,8 @@ export const payoutsPage = `<!doctype html>
                     <h2 class="card-title" id="balance-heading">Balance</h2>
                   </div>
                   <div class="card-body">
-                    <div id="balance" class="slot">Loading balance…</div>
+                    <div class="slot-loading" id="balance-loading">Loading balance…</div>
+                    <div id="balance" class="slot"></div>
                   </div>
                 </div>
               </section>
@@ -115,7 +113,8 @@ export const payoutsPage = `<!doctype html>
                   </div>
                   <div class="card-body">
                     <p class="text-secondary">Choose a payout destination and withdrawal method.</p>
-                    <div id="withdraw" class="slot">Loading withdrawal controls…</div>
+                    <div class="slot-loading" id="withdraw-loading">Loading withdrawal controls…</div>
+                    <div id="withdraw" class="slot"></div>
                   </div>
                 </div>
               </section>
@@ -125,7 +124,8 @@ export const payoutsPage = `<!doctype html>
                     <h2 class="card-title" id="history-heading">Payout history</h2>
                   </div>
                   <div class="card-body">
-                    <div id="history" class="slot">Loading withdrawal history…</div>
+                    <div class="slot-loading" id="history-loading">Loading withdrawal history…</div>
+                    <div id="history" class="slot"></div>
                   </div>
                 </div>
               </section>
@@ -171,6 +171,7 @@ export const payoutsPage = `<!doctype html>
         status.className = 'payout-status';
         status.textContent = 'Connecting your seller account…';
         elements.classList.remove('hidden');
+        for (const loading of elements.querySelectorAll('.slot-loading')) loading.classList.remove('hidden');
         portal.classList.add('hidden');
         portal.removeAttribute('href');
         try {
@@ -191,7 +192,8 @@ export const payoutsPage = `<!doctype html>
           const whop = await loadWhopElements({ environment: 'sandbox' });
           if (!whop) throw new Error('Whop Elements is unavailable.');
           let ready = 0;
-          const onReady = () => {
+          const onReady = (slot) => () => {
+            document.querySelector(slot + '-loading')?.classList.add('hidden');
             ready += 1;
             if (ready === 3) status.textContent = 'Payout controls loaded.';
           };
@@ -214,9 +216,9 @@ export const payoutsPage = `<!doctype html>
           });
           session.on('error', onError);
           session.on('tokenRefreshError', onError);
-          session.createElement('balance-element', { onReady }).mount('#balance');
-          session.createElement('withdraw-button-element', { onReady }).mount('#withdraw');
-          session.createElement('withdrawals-element', { onReady }).mount('#history');
+          session.createElement('balance-element', { onReady: onReady('#balance') }).mount('#balance');
+          session.createElement('withdraw-button-element', { onReady: onReady('#withdraw') }).mount('#withdraw');
+          session.createElement('withdrawals-element', { onReady: onReady('#history') }).mount('#history');
         } catch (error) {
           session?.destroy();
           session = undefined;
