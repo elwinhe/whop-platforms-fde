@@ -118,7 +118,7 @@ app.post("/api/onboarding", async (c) => {
     }
     const link = await createWhopSandboxClient().json("account_links", postJson({ account_id: companyId, use_case: "account_onboarding", return_url: publicUrl("onboarding/complete"), refresh_url: publicUrl("onboarding/refresh") }));
     if (!link.response.ok) return c.json({ error: "whop_error", provider: safeProviderError(link.data) }, 502);
-    return c.json({ company_id: companyId, external_id: auth.externalId, country_metadata: auth.country, country_verified: false, account_onboarding: link.data });
+    return c.json({ company_id: companyId, external_id: auth.externalId, country_metadata: auth.country, account_onboarding: link.data });
   } catch (error) { return c.json({ error: "onboarding_failed", message: error instanceof Error ? error.message : "Onboarding failed" }, 502); }
 });
 
