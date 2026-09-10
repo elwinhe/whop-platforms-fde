@@ -1,113 +1,138 @@
-# Ledgerly × Whop platform scaffold
+# Ledgerly × Whop Platforms
 
-Minimal Node 22/TypeScript starting point for the Ledgerly Platforms FDE assessment. It runs locally, serves a health check and a future payouts page, and provides a sandbox seller seed script. Every financial route returns `501 Not Implemented`; the webhook route must not acknowledge success until signature verification and durable event persistence exist.
+Ledgerly is a sandbox reference for a marketplace built on Whop connected accounts. It includes authenticated seller onboarding, 8% direct-charge checkout, embedded and hosted payouts, durable Standard Webhooks ingestion, platform operations, and read-only reconciliation.
 
-## Run locally
+## Quick start
+
+Requires Node 22. The durable store uses Node's built-in SQLite API.
 
 ```sh
 npm ci
+cp .env.example .env
 npm run dev
 ```
 
-Copy `.env.example` to `.env` to configure sandbox calls. The generic wrapper is locked to `https://sandbox-api.whop.com/api/v1/`, uses built-in `fetch`, requires `WHOP_API_KEY`, and applies a timeout. See only the [official Whop documentation](https://docs.whop.com/) before adding endpoint-specific behavior.
+Open http://127.0.0.1:3000. Enter the token from one configured `LEDGERLY_SELLER_SESSIONS` entry; the browser uses it only as a Bearer credential to the local server. The Whop API key is never returned to the browser.
 
-Available scripts: `dev`, `typecheck`, `build`, `start`, and `reconcile` (the last intentionally exits nonzero until implemented).
+Use sandbox credentials only. `LEDGERLY_PUBLIC_URL` must be an HTTPS tunnel/origin because Whop account-link return URLs do not accept localhost. The generic API client is locked to `https://sandbox-api.whop.com/api/v1/`, rejects redirects, and times out.
 
-## Money flows to implement and prove
+## Configuration and scopes
 
-Direct charge ($25 with $2 application fee), then refund:
+`.env.example` documents every variable. `LEDGERLY_SELLER_SESSIONS` is a local-demo JSON mapping from long random session tokens to server-owned `external_id`, email, and two-letter country metadata. Request bodies cannot choose another seller. Replace this static mapping with real application sessions before production.
+
+Grant the platform key only the actions exercised:
+
+- connected accounts/onboarding: `company:create_child`, `company:basic:read`;
+- checkout: `checkout_configuration:create`, `checkout_configuration:basic:read`;
+- payout token/portal: `company:balance:read`, `payout:withdraw_funds`, `payout:withdrawal:read`, `payout:destination:read`, `payout:create_destination`;
+- reconciliation: `payment:basic:read`, `payout:transfer:read`;
+- operations as needed: `developer:manage_webhook`, `company:suspend_child`, `developer:manage_api_key`, `company:update_child_fees`.
+
+`WHOP_WEBHOOK_SECRET` is the `whsec_` Standard Webhooks secret, not the platform API key.
+
+## Seller HTTP flow
+
+All seller routes require `Authorization: Bearer <seller-session-token>`.
+
+```sh
+curl -X POST https://YOUR-TUNNEL/api/onboarding -H 'Authorization: Bearer SESSION'
+curl -X POST https://YOUR-TUNNEL/api/checkout \
+  -H 'Authorization: Bearer SESSION' -H 'Content-Type: application/json' \
+  -d '{"order_id":"order-1001","amount_minor":2500,"currency":"usd","title":"Acme Preset Pack"}'
+```
+
+Onboarding lists every child-account page and reuses one exact `metadata.external_id` match. Email and country metadata mismatches stop with 409. Before creating, SQLite records a guarded attempt and sends a stable provider idempotency key; concurrent, crashed, or network-ambiguous attempts do not issue another create until a later listing reveals the account. The country value is descriptive metadata, not proof of legal or payout country.
+
+Checkout accepts integer minor units and computes the fee with integer arithmetic (`2500 → 200`). It verifies the locally bound account still appears under the configured platform, records the order fingerprint before POST, sends an idempotency key, and retrieves the known checkout on exact retry. The connected account is bound in `plan.company_id`, and inline products use the order ID as a stable external identifier. An unresolved attempt stops instead of risking a second checkout. Whop validation errors are returned as `provider` errors; a URL is never fabricated.
+
+The inline-plan request follows Whop's current checkout schema and official Masterclass example. In this sandbox, an earlier assessment-shaped request produced a conflicting `company_id` validation error. That historical provider/schema blocker is not evidence of a checkout; validate the corrected request in an enabled sandbox rather than claiming success from the local implementation.
+
+## Payouts
+
+The seller dashboard uses [Tabler](https://docs.tabler.io/ui/getting-started/installation), pinned to 1.5.1 with stylesheet integrity verification. Its responsive cards contain the Whop controls; the stylesheet requires access to jsDelivr. No Tabler JavaScript or frontend build is needed.
+
+The root page mounts Whop's official `BalanceElement`, `WithdrawButtonElement`, and `WithdrawalsElement` in sandbox mode. Its token callback calls `POST /api/payout-token`, so the 10-minute token refreshes without exposing the platform key. Loading and provider errors are visible. `POST /api/payout-portal` creates a time-limited `payouts_portal` fallback.
+
+Configure a crypto-withdrawal markup (preview first):
+
+```sh
+npm run operations -- markup crypto biz_SELLER 2.5
+npm run operations -- markup crypto biz_SELLER 2.5 --apply
+```
+
+This uses the supported `crypto_withdrawal_markup` rail. Inspect existing markups before applying in a populated sandbox; the CLI intentionally does not auto-delete or replace them.
+
+## Webhooks and durable ledger
+
+Create one platform webhook with child events and the eight assessment events:
+
+```sh
+npm run operations -- webhook create https://YOUR-TUNNEL/api/webhook
+npm run operations -- webhook create https://YOUR-TUNNEL/api/webhook --apply
+npm run operations -- webhook test hook_WEBHOOK payment.succeeded
+npm run operations -- webhook test hook_WEBHOOK payment.succeeded --apply
+npm run operations -- webhook replay hook_WEBHOOK DELIVERY_ID
+npm run operations -- webhook replay hook_WEBHOOK DELIVERY_ID --apply
+```
+
+The consumer reads at most 1 MiB, verifies the exact raw body with Standard Webhooks' five-minute timestamp tolerance, and only then parses it. A SQLite transaction inserts the unique provider event ID and its ledger effect together. Duplicate IDs return success without posting twice. Underscore aliases normalize to dotted names, and `withdrawal.*` normalizes to `payout.*`; resource-level uniqueness prevents alias events from double-posting. Status ranks prevent late pending events from replacing terminal state.
+
+Routing recognizes envelope `account_id`/`company_id` and data account identifiers. Transfers prefer a known connected destination, then origin, so platform-to-seller transfers land in the recipient's ledger. This reference stores one seller entry per transfer; transfers between two connected sellers would need separate debit and credit entries. Unknown sellers and payloads without a stable resource ID are durably recorded with an explicit processing status but do not mutate the ledger. Persistence failure returns 503, causing Whop to retry. SQLite provides restart durability for one local instance; production needs managed backups, encryption/access controls, and a shared database when horizontally scaled.
+
+## Operations
+
+Every operation is a JSON preview unless `--apply` is present:
+
+```sh
+npm run operations -- account suspend biz_SELLER
+npm run operations -- key create biz_SELLER
+```
+
+The per-seller key policy grants read-only account/payment/payout actions and limits its statement resources to the chosen `biz_` ID. Whop requires a user session for API-key creation, so `key create --apply` additionally requires `WHOP_USER_TOKEN`; an Account API key cannot perform that operation. The one-time secret is never logged: it is saved with mode 0600 under ignored `evidence/api-keys/`, while stdout is redacted. Suspension and key creation are provider writes; use `--apply` only after reviewing the preview. Webhook delivery replay preserves the original webhook ID (`regenerate_id: false`) to exercise consumer deduplication.
+
+## Reconciliation
+
+```sh
+npm run reconcile -- --seller biz_SELLER
+npm run reconcile -- --seller biz_SELLER --db data/ledgerly.sqlite
+```
+
+The job opens SQLite read-only, independently fetches every page of seller payments plus sent and received transfers, deduplicates remote transfers, and compares ID, integer minor-unit amount, currency, and status. Output is deterministically sorted. Exit 0 means no differences, 2 means differences, and 1 means invalid input/read/provider failure. It never replaces local evidence with fetched data.
+
+## Reproducible sandbox helpers
+
+```sh
+npm run seed:sellers
+npm run seed:sellers -- --apply
+npm run seed:sellers -- --apply --probe
+npm run money -- inspect biz_ACCOUNT
+npm run money -- checkout direct order-us-1
+```
+
+Both helpers preview writes by default. Seller seeding lists all children and reuses stable external IDs. `--probe` can intentionally create a duplicate and must be used only for assessment evidence. Money operations preserve order-indexed retry records under ignored `evidence/money-flows/operations/`; unresolved attempts older than Whop's 24-hour idempotency window refuse another POST. See command `--help` and inspect previews before any `--apply`.
+
+## Money-flow diagrams
 
 ```mermaid
 sequenceDiagram
-  Buyer->>US seller checkout: Pay $25
-  US seller checkout->>US seller ledger: Seller share
-  US seller checkout->>Ledgerly ledger: $2 application fee
-  Ledgerly->>Buyer: Refund
-  Note over Ledgerly,US seller ledger: Record fee and seller-share reversal behavior
+  Buyer->>Whop checkout: Pay $25 to US seller
+  Whop checkout->>US seller ledger: Credit seller share
+  Whop checkout->>Ledgerly ledger: Credit $2 application fee
+  Ledgerly->>Whop: Refund payment
+  Whop->>US seller ledger: Record seller reversal
+  Whop->>Ledgerly ledger: Record actual fee/refund behavior
 ```
-
-Platform charge, then transfer:
 
 ```mermaid
 sequenceDiagram
-  Buyer->>Ledgerly checkout: Pay for item
-  Ledgerly checkout->>Ledgerly ledger: Platform charge
-  Ledgerly ledger->>Brazil seller ledger: Transfer seller share
-  Note over Ledgerly ledger: Top up first if sandbox balance is empty
+  Buyer->>Whop checkout: Pay Ledgerly
+  Whop checkout->>Ledgerly ledger: Credit platform charge
+  Ledgerly->>Whop transfers: Send $23 to Brazil seller
+  Whop transfers->>Brazil seller ledger: Credit transfer
 ```
 
-## Assessment scope checklist
+## Evidence and limitations
 
-- [ ] Create the Ledgerly platform plus US, Germany, and Brazil sellers; record parent/account IDs.
-- [ ] Probe duplicate seller creation and attempted nesting beneath a connected account.
-- [ ] Make onboarding idempotent by external ID; create/fetch using external ID, email, and country, then return an onboarding link.
-- [ ] Capture seller verification, required actions, and capabilities before/after onboarding.
-- [ ] Compute and validate the 8% application fee; prove the direct $25 charge, $2 fee, refund, and resulting ledger entries.
-- [ ] Prove a platform charge and transfer to the Brazil seller (including top-up if required).
-- [ ] Embed payouts with short-lived, explicitly scoped access; demonstrate portal fallback and one rail's fee markup.
-- [ ] Configure child events for payment succeeded/failed, refund, dispute, transfer completed, payout created/updated, and account updated; capture each payload and replay a delivery.
-- [ ] Suspend a seller and create a least-privilege key scoped to one connected account.
-- [ ] Implement durable event-id idempotency across restarts, signature verification before acknowledgement, and seller routing.
-- [ ] Reconcile one seller's Whop payments/transfers against a durable local ledger.
-- [ ] Complete the missing-account/payout-event/pending-withdrawal debug answers and three product/docs improvements.
-- [ ] Add final IDs and screenshots/recordings to `docs/evidence.md`; provide written answers and Loom.
-- [ ] Send the sandbox business ID to the recruiter for platform enablement.
-- [ ] Reconcile the current private-repository preference with the assessment's public-repository submission requirement before submitting.
+No payments, refunds, transfers, webhook writes, suspensions, API keys, or fee markups are executed by installing this repository. The only currently recorded live result is the already-completed US onboarding read in `docs/evidence.md`. Platform enablement is not confirmed, and the remaining IDs, screenshots, payloads, and money-flow proof must come from reviewed sandbox runs. Mocks or locally signed events prove local behavior only, never provider delivery.
 
-Templates live in [`docs/answers.md`](docs/answers.md) and [`docs/evidence.md`](docs/evidence.md).
-
-## Step 1: reproducible seller setup
-
-Set `WHOP_PLATFORM_COMPANY_ID=biz_BC8sRG36RkIpHk`, your sandbox `WHOP_API_KEY`, and `SEED_SELLER_EMAIL` in the ignored `.env`. `SEED_SELLER_EMAIL` must be a mailbox you control: Whop rejects addresses that cannot receive mail, even in sandbox (see [`docs/evidence.md`](docs/evidence.md)). `SEED_SELLER_EMAIL_US`, `SEED_SELLER_EMAIL_DE`, `SEED_SELLER_EMAIL_BR`, and `SEED_SELLER_EMAIL_NESTED` optionally override individual accounts, for example with plus-addressed variants of one inbox. An applied run validates every address it might submit before sending any request, and refuses reserved domains such as `example.com` locally. The platform and key are created manually. For this script, select `company:create_child` and `company:basic:read` in the sandbox key UI; balance-read is not used here.
-
-```sh
-npm run seed:sellers                  # Preview; no key or network required
-npm run seed:sellers -- --apply       # List all children, reuse or create US/DE/BR
-npm run seed:sellers -- --apply --probe # Also repeat US creation and attempt nesting
-```
-
-The three payloads include `parent_company_id`, the configured receiving `email` (the preview prints the resolved address, or `<SEED_SELLER_EMAIL>` when unset), and stable `metadata.external_id`. Country codes are stored as descriptive metadata, not verified legal/payout country. Complete real country selection through onboarding; this seed alone does not prove country eligibility. See [Whop enrollment](https://docs.whop.com/developer/platforms/enroll-connected-accounts) and [company listing](https://docs.whop.com/api-reference/companies/list-companies).
-
-Each applied run saves HTTP statuses, selected response fields, requests (including the configured email addresses), IDs, and errors under ignored `evidence/seed-sellers/`. Evidence is saved after each response and on failure. Inspect and summarize results in `docs/evidence.md`; do not commit credentials or unreviewed exports. No automatic POST retries occur. A network timeout can still leave an account created remotely: inspect the sandbox before retrying.
-
-Reuse is a serial lookup by external ID, not server-enforced idempotency. Run only one seed process at a time. Existing sellers with different external IDs will not match: inspect and adjust the fixtures before applying to a populated sandbox. Multiple matches stop the script. The duplicate probe deliberately bypasses lookup and can create an extra account; it records whether the returned ID matches. The nested probe records the exact API error and flags unexpected success or non-422 failures. A 422 still needs inspection to confirm it is specifically the nesting error. `complete` means the script finished, not that all assessment requirements were verified.
-
-## Step 3: two money flows
-
-`scripts/money-flows.ts` uses the existing sandbox client and `.env` key. Writes preview by default; add `--apply` to execute. The fixed amounts are $25 per item, $2 application fee for direct charges, and $23 for transfers (before processing fees).
-
-```sh
-npm run money -- inspect biz_BC8sRG36RkIpHk
-npm run money -- inspect biz_q5tPMk6MCfoLOm
-npm run money -- checkout direct order-us-1 --apply
-```
-
-Open the printed checkout URL and pay with sandbox card `4242 4242 4242 4242`, a future expiry, and any three-digit CVC. Find the payment ID in the seller's dashboard or `inspect` output, then:
-
-```sh
-npm run money -- inspect biz_q5tPMk6MCfoLOm pay_REPLACE
-npm run money -- inspect biz_BC8sRG36RkIpHk
-npm run money -- refund pay_REPLACE --apply
-npm run money -- inspect biz_q5tPMk6MCfoLOm pay_REPLACE
-npm run money -- inspect biz_BC8sRG36RkIpHk
-npm run money -- checkout platform order-br-1 --apply
-```
-
-Pay the platform checkout separately. Check Ledgerly's available balance in the sandbox dashboard and the Brazilian seller's transfer capability with `inspect`. Top up in the sandbox dashboard if necessary; a pending payment is not available cash. Replace `biz_BRAZIL` below with the seeded Brazilian seller ID:
-
-```sh
-npm run money -- inspect biz_BRAZIL
-npm run money -- transfer biz_BRAZIL order-br-1 --apply
-npm run money -- inspect biz_BC8sRG36RkIpHk
-npm run money -- inspect biz_BRAZIL
-```
-
-Reuse the same order reference on retries. Whop's idempotency key prevents duplicate operations only within its **24-hour retention period**; changing the order creates a new operation. The script also keeps an order-indexed record under ignored `evidence/money-flows/operations/`: once an ID is known, reruns retrieve that operation instead of creating another, even after 24 hours. An unresolved attempt older than 24 hours stops without sending a POST. Reconcile it in the sandbox and record the confirmed ID in the indicated file before rerunning; do not delete the record or change the order to bypass uncertainty. A failed retrieval also stops without creating a replacement. Keep this directory across runs and use the same worktree; operations made before these records existed require manual reconciliation before reuse. The internal start time controls retry safety and is not included in redacted ledger evidence.
-
-Refund keys are derived from the payment ID and use the same local tracking. An operation lock prevents simultaneous requests for the same order; after a crash, check that no process is active before removing the indicated lock file. The script does not retry requests automatically or assert settlement from a successful HTTP response. A transfer is separately triggered and does not check whether its order was paid; inspect payment success first. It trusts the supplied Brazilian account ID, so verify it before applying.
-
-`scripts/money-contracts.ts` defines the fields this helper sends and consumes using Whop's [native OpenAPI schema](https://docs.whop.com/openapi/api-v1-native.json). These are focused contracts, not complete API models or runtime schema validation. The checkout's inline `product` and `application_fee_amount` follow the assessment; they are absent from the published native checkout schema. Raw response fields still pass through the existing evidence allowlist. See [Whop's retry rules](https://docs.whop.com/developer/api/idempotency).
-
-Each executed command saves selected financial fields without identity details, checkout URLs, or timestamps under ignored `evidence/money-flows/`. `inspect` reads all ledger pages, optionally retrieves a `pay_` or `tr_` resource, and preserves API amount units without conversion. Match activity by resource ID; do not sum unrelated history or assume fees are refunded. Summarize payment/refund/transfer IDs and actual ledger changes in `docs/evidence.md`. No Step 3 payment has been executed merely by adding this helper.
-
-References: [money flows](https://docs.whop.com/developer/platforms/collect-payments-for-connected-accounts), [financial activity](https://docs.whop.com/api-reference/beta/ledgers/list-financial-activity), [refunds](https://docs.whop.com/api-reference/beta/payments/refund-payment), [sandbox cards](https://docs.whop.com/developer/guides/sandbox).
+This reference has no production identity provider, distributed lock/database, secret manager, observability, backup policy, or public deployment. Do not publish private assessment exports, account links, session tokens, or raw evidence. Resolve the assessment's public-repository requirement with the repository owner before changing visibility.

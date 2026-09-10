@@ -35,7 +35,14 @@ US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
 - Direct payment ID / refund ID / transfer ID:
 - Ledger screenshots or redacted exports:
 - Webhook ID, child events, required event payloads, and replay:
-- Durable idempotency and reconciliation run:
+- Reconciliation: `npm run reconcile -- --seller biz_q5tPMk6MCfoLOm` exited `0`. Payments, sent transfers, and received transfers returned HTTP `200` after the permission update. Local and remote counts were both `0`, with no differences. This used a newly initialized empty local ledger; it confirms access and the empty-state comparison, not reconciliation of completed transactions.
+
+### Dashboard validation
+
+- Tabler 1.5.1 styles the seller dashboard; Whop supplies the embedded payout controls.
+- Typecheck and build pass. Desktop and mobile layouts fit without horizontal overflow; invalid sessions show an error and restore the load button. Seller endpoints reject unauthenticated requests with HTTP `401`.
+- Authenticated embedded payouts still require `LEDGERLY_SELLER_SESSIONS` and a public HTTPS return URL in local configuration. Rendering live payout controls was not verified in this checkout.
+- Local validation with synthetic signed events: invalid signatures returned `401`; a platform-to-Brazil transfer reached the recipient's ledger; replay after a server restart left exactly one entry. Malformed authenticated checkout returned `400`, and hosted onboarding/payout return routes redirect to the dashboard. No financial API writes were used for validation.
 
 ## Submission
 

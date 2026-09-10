@@ -5,6 +5,7 @@ dist/
 !.env.example
 *.db
 *.sqlite*
+data/
 coverage/
 *.log
 .DS_Store
