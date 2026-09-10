@@ -1,0 +1,310 @@
+export const payoutsPage = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Ledgerly · Payouts</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@tabler/core@1.5.1/dist/css/tabler.min.css"
+      integrity="sha384-tLWyEXulonaekaXL6+fCZQJv/MujuGIpVTBzuVEpwSqFDEfLkPA/PAYGTSBBJO2X"
+      crossorigin="anonymous"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      .ledgerly-container {
+        max-width: 1120px;
+      }
+      .brand-mark {
+        font-weight: 800;
+        letter-spacing: -0.06em;
+      }
+      .session-input {
+        min-width: 0;
+      }
+      .payout-status {
+        color: var(--tblr-secondary);
+        min-height: 24px;
+        margin-top: 16px;
+      }
+      .payout-status.error {
+        color: var(--tblr-danger);
+      }
+      .slot {
+        min-height: 80px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      :focus-visible {
+        outline: 2px solid var(--tblr-primary);
+        outline-offset: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="navbar navbar-expand-md d-print-none">
+        <div class="container-xl ledgerly-container">
+          <a class="navbar-brand" href="/" aria-label="Ledgerly home">
+            <span class="avatar avatar-sm bg-primary text-white me-2 brand-mark" aria-hidden="true">L</span>Ledgerly
+          </a>
+          <div class="d-flex align-items-center gap-3">
+            <a class="nav-link" href="/accounts">Connected accounts</a>
+            <span class="badge bg-yellow-lt">Sandbox</span>
+          </div>
+        </div>
+      </header>
+      <main class="page-wrapper">
+        <div class="page-header">
+          <div class="container-xl ledgerly-container">
+            <div class="page-pretitle">Seller workspace</div>
+            <h1 class="page-title">Payouts</h1>
+            <p class="text-secondary mt-2">
+              Manage your balance, withdraw funds, and keep track of your payouts.
+            </p>
+          </div>
+        </div>
+        <div class="page-body">
+          <div class="container-xl ledgerly-container">
+            <section class="card mb-4" aria-labelledby="session-heading">
+              <div class="card-header">
+                <h2 class="card-title" id="session-heading">Connect your seller account</h2>
+              </div>
+              <div class="card-body">
+                <label class="form-label" for="token">Seller session token</label>
+                <div class="d-flex gap-2 flex-column flex-sm-row">
+                  <input
+                    class="form-control session-input"
+                    id="token"
+                    type="password"
+                    autocomplete="off"
+                    placeholder="Enter your seller session token"
+                    aria-describedby="session-help"
+                  />
+                  <button class="btn btn-primary" id="load">Load payouts</button>
+                  <a
+                    id="portal"
+                    class="btn btn-outline-primary hidden"
+                    target="_blank"
+                    rel="noreferrer"
+                  >Whop portal ↗</a>
+                </div>
+                <div id="status" class="payout-status" role="status" aria-live="polite">
+                  Connect an account to view its payout details.
+                </div>
+              </div>
+            </section>
+            <section class="card mb-4" aria-labelledby="checkout-heading">
+              <div class="card-header">
+                <h2 class="card-title" id="checkout-heading">Sandbox checkout</h2>
+              </div>
+              <div class="card-body">
+                <p class="text-secondary">Acme Preset Pack · $25 USD · $2 platform fee (8%). Uses the seller session entered above.</p>
+                <label class="form-label" for="checkout-order">Order ID</label>
+                <input class="form-control mb-3" id="checkout-order" aria-describedby="checkout-help" />
+                <p class="text-secondary small" id="checkout-help">Keep this ID when retrying. Change it only for a new order. Creating a link does not charge a card.</p>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button class="btn btn-primary" id="checkout-create">Create $25 sandbox checkout</button>
+                  <a class="btn btn-outline-primary hidden" id="checkout-link" target="_blank" rel="noreferrer">Open sandbox checkout ↗</a>
+                </div>
+                <div id="checkout-status" class="payout-status" role="status" aria-live="polite"></div>
+              </div>
+            </section>
+            <div id="elements" class="row row-cards hidden">
+              <section class="col-lg-7" aria-labelledby="balance-heading">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h2 class="card-title" id="balance-heading">Balance</h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="slot-loading" id="balance-loading">Loading balance…</div>
+                    <div id="balance" class="slot"></div>
+                  </div>
+                </div>
+              </section>
+              <section class="col-lg-5" aria-labelledby="withdraw-heading">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h2 class="card-title" id="withdraw-heading">Withdraw funds</h2>
+                  </div>
+                  <div class="card-body">
+                    <p class="text-secondary">Choose a payout destination and withdrawal method.</p>
+                    <div class="slot-loading" id="withdraw-loading">Loading withdrawal controls…</div>
+                    <div id="withdraw" class="slot"></div>
+                  </div>
+                </div>
+              </section>
+              <section class="col-12" aria-labelledby="history-heading">
+                <div class="card">
+                  <div class="card-header">
+                    <h2 class="card-title" id="history-heading">Payout history</h2>
+                  </div>
+                  <div class="card-body">
+                    <div class="slot-loading" id="history-loading">Loading withdrawal history…</div>
+                    <div id="history" class="slot"></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <p class="text-secondary small mt-4">
+              Payouts powered by Whop. If embedded controls cannot load, use the hosted portal.
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module">
+      const tokenInput = document.querySelector('#token');
+      const load = document.querySelector('#load');
+      const status = document.querySelector('#status');
+      const elements = document.querySelector('#elements');
+      const portal = document.querySelector('#portal');
+      let session;
+
+      const checkoutButton = document.querySelector('#checkout-create');
+      const checkoutOrder = document.querySelector('#checkout-order');
+      const checkoutLink = document.querySelector('#checkout-link');
+      const checkoutStatus = document.querySelector('#checkout-status');
+      checkoutOrder.value = 'demo-' + crypto.randomUUID();
+      const clearCheckout = () => {
+        checkoutLink.classList.add('hidden');
+        checkoutLink.removeAttribute('href');
+        checkoutStatus.textContent = '';
+      };
+      tokenInput.addEventListener('input', clearCheckout);
+      checkoutOrder.addEventListener('input', clearCheckout);
+      checkoutButton.addEventListener('click', async () => {
+        clearCheckout();
+        checkoutStatus.className = 'payout-status';
+        if (!tokenInput.value.trim()) {
+          checkoutStatus.textContent = 'Enter your seller session token above first.';
+          return;
+        }
+        checkoutButton.disabled = checkoutOrder.disabled = tokenInput.disabled = load.disabled = true;
+        checkoutStatus.textContent = 'Creating sandbox checkout…';
+        try {
+          const response = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + tokenInput.value,
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              order_id: checkoutOrder.value.trim(),
+              amount_minor: 2500,
+              currency: 'usd',
+              title: 'Acme Preset Pack',
+            }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || data.provider?.message || data.error || 'Checkout failed.');
+          const url = new URL(data.checkout?.purchase_url);
+          if (url.protocol !== 'https:' || url.hostname !== 'sandbox.whop.com')
+            throw new Error('No valid sandbox checkout URL returned.');
+          checkoutLink.href = url.href;
+          checkoutLink.classList.remove('hidden');
+          checkoutStatus.textContent = 'Checkout ready: $25 USD with a $2 platform fee. Open the link to pay with a sandbox card.';
+        } catch (error) {
+          checkoutStatus.className = 'payout-status error';
+          checkoutStatus.textContent = error instanceof Error ? error.message : 'Unable to create checkout.';
+        } finally {
+          checkoutButton.disabled = checkoutOrder.disabled = tokenInput.disabled = load.disabled = false;
+        }
+      });
+
+      load.addEventListener('click', async () => {
+        const sellerToken = tokenInput.value;
+        async function request(url, options = {}) {
+          const response = await fetch(url, {
+            ...options,
+            headers: {
+              Authorization: 'Bearer ' + sellerToken,
+              Accept: 'application/json',
+              ...options.headers,
+            },
+          });
+          const data = await response.json().catch(() => ({ error: 'Invalid server response' }));
+          if (response.status === 401)
+            throw new Error('Enter a valid seller session token to load payouts.');
+          if (!response.ok)
+            throw new Error(
+              data.error?.message || data.message || data.error || 'HTTP ' + response.status,
+            );
+          return data;
+        }
+
+        load.disabled = true;
+        checkoutButton.disabled = true;
+        tokenInput.disabled = true;
+        status.className = 'payout-status';
+        status.textContent = 'Connecting your seller account…';
+        elements.classList.remove('hidden');
+        for (const loading of elements.querySelectorAll('.slot-loading')) loading.classList.remove('hidden');
+        portal.classList.add('hidden');
+        portal.removeAttribute('href');
+        try {
+          session?.destroy();
+          session = undefined;
+          const profile = await request('/api/payout-context');
+          try {
+            const link = await request('/api/payout-portal', { method: 'POST' });
+            const url = new URL(link.url);
+            if (url.protocol !== 'https:') throw new Error('Invalid portal URL');
+            portal.href = url.href;
+            portal.classList.remove('hidden');
+          } catch {
+            status.textContent = 'Hosted portal unavailable. Loading embedded payouts…';
+          }
+
+          const { loadWhopElements } = await import('/vendor/whop-elements/index.mjs');
+          const whop = await loadWhopElements({ environment: 'sandbox' });
+          if (!whop) throw new Error('Whop Elements is unavailable.');
+          let ready = 0;
+          const onReady = (slot) => () => {
+            document.querySelector(slot + '-loading')?.classList.add('hidden');
+            ready += 1;
+            if (ready === 3) status.textContent = 'Payout controls loaded.';
+          };
+          const onError = () => {
+            status.className = 'payout-status error';
+            status.textContent = portal.hasAttribute('href')
+              ? 'Embedded payouts could not load. Open the hosted portal to continue.'
+              : 'Payouts could not load. Please try connecting again.';
+          };
+          session = whop.createPayoutsSession({
+            companyId: profile.company_id,
+            redirectUrl: location.origin + '/',
+            token: async ({ abortSignal }) => {
+              const value = await request('/api/payout-token', {
+                method: 'POST',
+                signal: abortSignal,
+              });
+              return value.token;
+            },
+          });
+          session.on('error', onError);
+          session.on('tokenRefreshError', onError);
+          session.createElement('balance-element', { onReady: onReady('#balance') }).mount('#balance');
+          session.createElement('withdraw-button-element', { onReady: onReady('#withdraw') }).mount('#withdraw');
+          session.createElement('withdrawals-element', { onReady: onReady('#history') }).mount('#history');
+        } catch (error) {
+          session?.destroy();
+          session = undefined;
+          status.className = 'payout-status error';
+          status.textContent =
+            (error instanceof Error ? error.message : 'Unable to load payouts.') +
+            (portal.hasAttribute('href') ? ' Open the hosted portal to continue.' : '');
+          elements.classList.add('hidden');
+        } finally {
+          load.disabled = false;
+          checkoutButton.disabled = false;
+          tokenInput.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>`;

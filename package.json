@@ -3,18 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node --env-file-if-exists=.env dist/src/server.js",
-    "reconcile": "tsx scripts/reconcile.ts",
+    "reconcile": "node --env-file-if-exists=.env --import tsx scripts/reconcile.ts",
+    "operations": "node --env-file-if-exists=.env --import tsx scripts/operations.ts",
+    "money": "node --env-file-if-exists=.env --import tsx scripts/money-flows.ts",
     "seed:sellers": "node --env-file-if-exists=.env --import tsx scripts/seed-sellers.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.1",
-    "hono": "^4.9.6"
+    "@whop/embedded-components-vanilla-js": "^0.0.9",
+    "hono": "^4.9.6",
+    "standardwebhooks": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.18.1",
