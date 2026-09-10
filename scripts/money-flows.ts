@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createWhopSandboxClient } from "../src/whop.js";
 import type { ActivityQuery, Operations } from "./money-contracts.js";
 import { runOperation } from "./money-operation.js";
+import { safeProviderError } from "../src/domain.js";
 
 const PLATFORM = "biz_BC8sRG36RkIpHk";
 const US_SELLER = "biz_q5tPMk6MCfoLOm";
@@ -132,9 +133,15 @@ async function main() {
     operation = {
       kind: "checkout",
       body: {
-        account_id: target === "direct" ? US_SELLER : PLATFORM,
+        mode: "payment",
         plan: {
-          product: { title: "Acme Preset Pack" },
+          company_id: target === "direct" ? US_SELLER : PLATFORM,
+          product: {
+            title: "Acme Preset Pack",
+            external_identifier: `ledgerly-${order}`,
+          },
+          visibility: "hidden",
+          release_method: "buy_now",
           plan_type: "one_time",
           initial_price: 25,
           currency: "usd",
@@ -219,7 +226,7 @@ async function main() {
       http_status: response.status,
       request: payload,
       idempotency_key: key,
-      response: redact(data),
+      response: response.ok ? redact(data) : safeProviderError(data),
     });
     await writeFile(file, JSON.stringify(evidence, null, 2) + "\n", {
       mode: 0o600,

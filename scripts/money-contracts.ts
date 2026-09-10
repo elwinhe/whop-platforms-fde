@@ -2,9 +2,12 @@
 // (2026-09-09). Inline product/application_fee_amount follow the assessment;
 // those two fields are absent from the published native checkout schema.
 export interface CheckoutRequest {
-  account_id: string;
+  mode: "payment";
   plan: {
-    product: { title: string };
+    company_id: string;
+    product: { title: string; external_identifier: string };
+    visibility: "hidden";
+    release_method: "buy_now";
     plan_type: "one_time";
     initial_price: number;
     currency: string;

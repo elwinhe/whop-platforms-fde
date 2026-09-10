@@ -34,6 +34,7 @@ US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
 
 ## Payments and operations
 
+- Aligned the checkout helper with the server payload (`plan.company_id`, inline product external identifier, and payment mode). The US $25 checkout with a $2 application fee returned HTTP `403`: `forbidden`, "You are not authorized". The same key read both platform and US accounts with HTTP `200`; checkout authorization remains unresolved. No checkout URL or payment was created by this attempt.
 - Direct payment ID / refund ID / transfer ID:
 - Ledger screenshots or redacted exports:
 - Platform webhook `hook_KzHrEyfb8NxqA`: enabled with `child_resource_events: true` and all eight required events. Creation required `Api-Version-Date: 2026-09-09`.
