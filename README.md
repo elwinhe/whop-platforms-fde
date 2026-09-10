@@ -1,5 +1,8 @@
 # Ledgerly × Whop Platforms
 
+### Loom video link: 
+https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
+
 Ledgerly is a sandbox reference for a marketplace built on Whop connected accounts. It includes authenticated seller onboarding, 8% direct-charge checkout, embedded and hosted payouts, durable Standard Webhooks ingestion, platform operations, and read-only reconciliation.
 
 ## Quick start
