@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const COMPANY_ID = /^biz_[A-Za-z0-9]+$/;
+export const PAYMENT_ID = /^pay_[A-Za-z0-9]+$/;
 export const CURRENCY = /^[a-z]{3}$/;
 export const ORDER_ID = /^[A-Za-z0-9_-]{1,120}$/;
 

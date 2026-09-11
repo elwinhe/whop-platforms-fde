@@ -23,14 +23,14 @@ Use sandbox credentials only. `LEDGERLY_PUBLIC_URL` must be an HTTPS tunnel/orig
 
 `.env.example` documents every variable. `LEDGERLY_SELLER_SESSIONS` is a local-demo JSON mapping from long random session tokens to server-owned `external_id`, email, and two-letter country metadata. Request bodies cannot choose another seller. Replace this static mapping with real application sessions before production.
 
-`LEDGERLY_ADMIN_TOKEN` is a separate random token of at least 24 characters for the operator view at `/accounts`. It authorizes only the connected-account overview and its hosted onboarding/payout-link actions; seller session tokens are never accepted. The overview paginates the configured platform's child companies, retrieves their current account state from Whop, and returns only a narrow display model rather than provider responses. Before creating either hosted link, the server verifies the selected account still belongs to `WHOP_PLATFORM_COMPANY_ID`. Replace this shared local-demo secret with real administrator identity and authorization before production.
+`LEDGERLY_ADMIN_TOKEN` is a separate random token of at least 24 characters for the operator view at `/accounts`. It authorizes the connected-account overview, connected-account creation (`POST /api/accounts` with `external_id`, `email`, `country` — reuses the same idempotent create-or-fetch flow as seller onboarding, so retries and duplicate external IDs resolve to the existing account), one-way suspension (`POST /api/accounts/:companyId/suspend`; Whop's API exposes no reactivation, so the UI requires confirmation), the hosted onboarding/payout-link actions, and the per-account transactions view; seller session tokens are never accepted. The overview paginates the configured platform's child companies, retrieves their current account state from Whop, and returns only a narrow display model rather than provider responses. Before creating either hosted link, the server verifies the selected account still belongs to `WHOP_PLATFORM_COMPANY_ID`. Replace this shared local-demo secret with real administrator identity and authorization before production.
 
 Grant the platform key only the actions exercised:
 
 - connected accounts/onboarding: `company:create_child`, `company:basic:read`;
 - checkout: `checkout_configuration:create`, `checkout_configuration:basic:read`;
 - payout token/portal: `company:balance:read`, `payout:withdraw_funds`, `payout:withdrawal:read`, `payout:destination:read`, `payout:create_destination`;
-- reconciliation: `payment:basic:read`, `payout:transfer:read`;
+- reconciliation and the transactions views: `payment:basic:read`, `payout:transfer:read`;
 - operations as needed: `developer:manage_webhook`, `company:suspend_child`, `developer:manage_api_key`, `company:update_child_fees`.
 
 `WHOP_WEBHOOK_SECRET` is the signing secret returned by Whop, not the platform API key. Whop's `ws_` secrets use raw-key verification; `whsec_` secrets use Standard Webhooks' base64 format.
@@ -44,6 +44,7 @@ curl -X POST https://YOUR-TUNNEL/api/onboarding -H 'Authorization: Bearer SESSIO
 curl -X POST https://YOUR-TUNNEL/api/checkout \
   -H 'Authorization: Bearer SESSION' -H 'Content-Type: application/json' \
   -d '{"order_id":"order-1001","amount_minor":2500,"currency":"usd","title":"Acme Preset Pack"}'
+curl https://YOUR-TUNNEL/api/transactions -H 'Authorization: Bearer SESSION'
 ```
 
 Onboarding lists every child-account page and reuses one exact `metadata.external_id` match. Email and country metadata mismatches stop with 409. Before creating, SQLite records a guarded attempt and sends a stable provider idempotency key; concurrent, crashed, or network-ambiguous attempts do not issue another create until a later listing reveals the account. The country value is descriptive metadata, not proof of legal or payout country.
@@ -56,7 +57,9 @@ The inline-plan request follows Whop's current checkout schema and official Mast
 
 The seller dashboard uses [Tabler](https://docs.tabler.io/ui/getting-started/installation), pinned to 1.5.1 with stylesheet integrity verification. Its responsive cards contain the Whop controls; the stylesheet requires access to jsDelivr. No Tabler JavaScript or frontend build is needed.
 
-The root page mounts Whop's official `BalanceElement`, `WithdrawButtonElement`, and `WithdrawalsElement` in sandbox mode. Its token callback calls `POST /api/payout-token`, so the 10-minute token refreshes without exposing the platform key. Loading and provider errors are visible. `POST /api/payout-portal` creates a time-limited `payouts_portal` fallback.
+The root page mounts Whop's official `BalanceElement` and `WithdrawButtonElement` in sandbox mode. Its token callback calls `POST /api/payout-token`, so the 10-minute token refreshes without exposing the platform key. Loading and provider errors are visible. `POST /api/payout-portal` creates a time-limited `payouts_portal` fallback.
+
+A Transactions table replaces the raw withdrawal history. `GET /api/transactions` reuses the reconciliation reads — the seller's payments plus sent and received transfers — and merges them with the local webhook ledger, so each sale shows the gross amount, the 8% platform fee, the seller's net after Whop processing fees, and whether the local ledger recorded the event. Paid sales are marked as pending until Whop settles funds to the available balance; refunds surface on the same row. A successful refund also remounts the balance element, so the displayed balance refreshes from Whop immediately instead of holding the stale pre-refund snapshot until the next page load. The operator view exposes the same table per connected account at `GET /api/accounts/:companyId/transactions` (admin token required).
 
 Configure a crypto-withdrawal markup (preview first):
 

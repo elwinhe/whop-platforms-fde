@@ -19,11 +19,16 @@ import {
   majorToMinor,
   minorToMajor,
   ORDER_ID,
+  PAYMENT_ID,
   safeProviderError,
 } from "./domain.js";
 import { payoutsPage } from "./payouts-page.js";
 import { LedgerStore } from "./store.js";
-import { createWhopSandboxClient } from "./whop.js";
+import {
+  findCompanyPayment,
+  loadCompanyTransactions,
+} from "./transactions.js";
+import { createWhopSandboxClient, whopEnvironment } from "./whop.js";
 
 const app = new Hono();
 const store = new LedgerStore();
@@ -153,6 +158,102 @@ async function assertOwnedCompany(companyId: string): Promise<void> {
     throw new Error(
       "Seller account is not a connected account of this platform",
     );
+}
+
+const EXTERNAL_ID = /^[a-z0-9][a-z0-9_-]{2,63}$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+type ResolveOutcome =
+  | { ok: true; companyId: string; created: boolean }
+  | { ok: false; status: 400 | 409 | 502; body: Record<string, unknown> };
+
+async function resolveConnectedAccount(
+  identity: SellerIdentity,
+): Promise<ResolveOutcome> {
+  const requestFingerprint = fingerprint(identity);
+  const local = store.sellerByExternalId(identity.externalId);
+  if (local && (local.email !== identity.email || local.country !== identity.country))
+    return { ok: false, status: 409, body: { error: "seller_identity_mismatch" } };
+  if (local) return { ok: true, companyId: local.company_id, created: false };
+  const matches = await listChildren(identity.externalId);
+  if (matches.length > 1)
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: "ambiguous_connected_accounts",
+        message:
+          "Multiple Whop accounts share this external ID; resolve manually.",
+      },
+    };
+  if (matches.length === 1) {
+    const companyId = assertSellerMatch(matches[0], identity);
+    store.finishOnboarding(identity.externalId, {
+      external_id: identity.externalId,
+      email: identity.email,
+      country: identity.country,
+      company_id: companyId,
+    });
+    return { ok: true, companyId, created: false };
+  }
+  const attempt = store.onboardingAttempt(identity.externalId);
+  if (attempt && attempt.fingerprint !== requestFingerprint)
+    return { ok: false, status: 409, body: { error: "seller_identity_mismatch" } };
+  if (attempt && attempt.status !== "complete")
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: "onboarding_attempt_unresolved",
+        message:
+          "A create may be in flight or ambiguous. Retry only after Whop listing reveals the account.",
+      },
+    };
+  if (!store.beginOnboarding(identity.externalId, requestFingerprint))
+    return { ok: false, status: 409, body: { error: "onboarding_in_progress" } };
+  let result;
+  try {
+    result = await createWhopSandboxClient().json("companies", {
+      ...postJson({
+        title: `Ledgerly seller ${identity.externalId}`,
+        email: identity.email,
+        parent_company_id: process.env.WHOP_PLATFORM_COMPANY_ID,
+        metadata: { external_id: identity.externalId, country: identity.country },
+      }),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": `ledgerly-onboarding-${requestFingerprint.slice(0, 32)}`,
+      },
+    });
+  } catch (error) {
+    store.markOnboardingAmbiguous(identity.externalId);
+    throw error;
+  }
+  if (!result.response.ok || !isObject(result.data)) {
+    if (
+      result.response.status >= 400 &&
+      result.response.status < 500 &&
+      result.response.status !== 409
+    )
+      store.clearOnboardingAttempt(identity.externalId);
+    else store.markOnboardingAmbiguous(identity.externalId);
+    return {
+      ok: false,
+      status:
+        result.response.status >= 400 && result.response.status < 500
+          ? (result.response.status as 400)
+          : 502,
+      body: { error: "whop_error", provider: safeProviderError(result.data) },
+    };
+  }
+  const companyId = assertSellerMatch(result.data, identity);
+  store.finishOnboarding(identity.externalId, {
+    external_id: identity.externalId,
+    email: identity.email,
+    country: identity.country,
+    company_id: companyId,
+  });
+  return { ok: true, companyId, created: true };
 }
 
 function statusFrom(value: unknown): string | null {
@@ -321,9 +422,26 @@ async function createOperatorAccountLink(
   }
 }
 
+const whopEnv = whopEnvironment();
+const renderPage = (page: string) =>
+  page
+    .replaceAll("__WHOP_ENV__", whopEnv)
+    .replaceAll("__WHOP_ENV_LABEL__", whopEnv === "sandbox" ? "sandbox" : "live")
+    .replaceAll("__WHOP_ENV_TITLE__", whopEnv === "sandbox" ? "Sandbox" : "Live")
+    .replaceAll(
+      "__WHOP_ENV_BADGE_CLASS__",
+      whopEnv === "sandbox" ? "bg-yellow-lt" : "bg-green-lt",
+    )
+    .replaceAll(
+      "__WHOP_CHECKOUT_HOST__",
+      whopEnv === "sandbox" ? "sandbox.whop.com" : "whop.com",
+    );
+const renderedPayoutsPage = renderPage(payoutsPage);
+const renderedAccountsPage = renderPage(accountsPage);
+
 app.get("/health", (c) => c.json({ status: "ok" }));
-app.get("/", (c) => c.html(payoutsPage));
-app.get("/accounts", (c) => c.html(accountsPage));
+app.get("/", (c) => c.html(renderedPayoutsPage));
+app.get("/accounts", (c) => c.html(renderedAccountsPage));
 app.get("/orders/:orderId/complete", (c) => c.redirect("/"));
 for (const path of [
   "/onboarding/complete",
@@ -365,6 +483,106 @@ app.get("/api/accounts", async (c) => {
   }
 });
 
+app.post("/api/accounts", async (c) => {
+  const authError = adminAuth(c);
+  if (authError) return authError;
+  try {
+    const body = await requireJson(c);
+    if (
+      typeof body.external_id !== "string" ||
+      !EXTERNAL_ID.test(body.external_id) ||
+      typeof body.email !== "string" ||
+      body.email.length > 254 ||
+      !EMAIL.test(body.email) ||
+      typeof body.country !== "string" ||
+      !/^[A-Z]{2}$/.test(body.country)
+    )
+      return c.json(
+        {
+          error: "invalid_account",
+          message:
+            "external_id (lowercase slug, 3-64 chars), email, and a two-letter uppercase country are required",
+        },
+        400,
+      );
+    const resolved = await resolveConnectedAccount({
+      externalId: body.external_id,
+      email: body.email.toLowerCase(),
+      country: body.country,
+    });
+    if (!resolved.ok) return c.json(resolved.body, resolved.status);
+    return c.json(
+      {
+        company_id: resolved.companyId,
+        external_id: body.external_id,
+        created: resolved.created,
+      },
+      resolved.created ? 201 : 200,
+    );
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof InputError
+            ? "invalid_account"
+            : "account_create_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to create the connected account",
+      },
+      error instanceof InputError ? error.status : 502,
+    );
+  }
+});
+
+app.post("/api/accounts/:companyId/suspend", async (c) => {
+  const authError = adminAuth(c);
+  if (authError) return authError;
+  const companyId = c.req.param("companyId");
+  if (typeof companyId !== "string" || !COMPANY_ID.test(companyId))
+    return c.json({ error: "invalid_company_id" }, 400);
+  try {
+    if (
+      !(await listPlatformChildren()).some(
+        (candidate) => candidate.id === companyId,
+      )
+    )
+      return c.json({ error: "account_not_connected_to_platform" }, 403);
+    const result = await createWhopSandboxClient().json(
+      `accounts/${companyId}/suspend`,
+      {
+        ...postJson({}),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `ledgerly-suspend-${companyId}`,
+        },
+      },
+    );
+    if (!result.response.ok || !isObject(result.data))
+      return c.json(
+        { error: "whop_error", provider: safeProviderError(result.data) },
+        result.response.status >= 400 && result.response.status < 500
+          ? (result.response.status as 400)
+          : 502,
+      );
+    const status =
+      typeof result.data.status === "string" ? result.data.status : null;
+    return c.json({ company_id: companyId, status });
+  } catch (error) {
+    return c.json(
+      {
+        error: "suspend_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to suspend the account",
+      },
+      502,
+    );
+  }
+});
+
 app.post("/api/accounts/:companyId/onboarding", (c) =>
   createOperatorAccountLink(c, "account_onboarding"),
 );
@@ -372,91 +590,163 @@ app.post("/api/accounts/:companyId/payouts-portal", (c) =>
   createOperatorAccountLink(c, "payouts_portal"),
 );
 
+app.get("/api/accounts/:companyId/transactions", async (c) => {
+  const authError = adminAuth(c);
+  if (authError) return authError;
+  const companyId = c.req.param("companyId");
+  if (typeof companyId !== "string" || !COMPANY_ID.test(companyId))
+    return c.json({ error: "invalid_company_id" }, 400);
+  try {
+    if (
+      !(await listPlatformChildren()).some(
+        (candidate) => candidate.id === companyId,
+      )
+    )
+      return c.json({ error: "account_not_connected_to_platform" }, 403);
+    return c.json({
+      company_id: companyId,
+      transactions: await loadCompanyTransactions(store, companyId),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "transactions_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to load transactions",
+      },
+      502,
+    );
+  }
+});
+
+app.get("/api/transactions", async (c) => {
+  const auth = sellerAuth(c);
+  if (auth instanceof Response) return auth;
+  const seller = store.sellerByExternalId(auth.externalId);
+  if (!seller) return c.json({ error: "seller_not_onboarded" }, 409);
+  try {
+    return c.json({
+      company_id: seller.company_id,
+      transactions: await loadCompanyTransactions(store, seller.company_id),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "transactions_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to load transactions",
+      },
+      502,
+    );
+  }
+});
+
+async function refundCompanyPayment(
+  c: Context,
+  companyId: string,
+): Promise<Response> {
+  const paymentId = c.req.param("paymentId");
+  if (typeof paymentId !== "string" || !PAYMENT_ID.test(paymentId))
+    return c.json({ error: "invalid_payment_id" }, 400);
+  try {
+    const payment = await findCompanyPayment(companyId, paymentId);
+    if (!payment) return c.json({ error: "payment_not_found" }, 404);
+    if (payment.settlement === "refunded")
+      return c.json(
+        { error: "already_refunded", message: "This payment is already fully refunded." },
+        409,
+      );
+    if (payment.status !== "paid")
+      return c.json(
+        {
+          error: "payment_not_refundable",
+          message: `Only paid payments can be refunded (status: ${payment.status}).`,
+        },
+        409,
+      );
+    const result = await createWhopSandboxClient().json(
+      `payments/${paymentId}/refund`,
+      {
+        ...postJson({}),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `ledgerly-full-refund-${paymentId}`,
+        },
+      },
+    );
+    if (!result.response.ok || !isObject(result.data)) {
+      const provider = safeProviderError(result.data);
+      return c.json(
+        {
+          error: "whop_error",
+          provider,
+          message:
+            isObject(provider) && typeof provider.message === "string"
+              ? provider.message
+              : "Whop rejected the refund",
+        },
+        result.response.status >= 400 && result.response.status < 500
+          ? (result.response.status as 400)
+          : 502,
+      );
+    }
+    return c.json({
+      company_id: companyId,
+      payment_id: paymentId,
+      status:
+        typeof result.data.status === "string" ? result.data.status : null,
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "refund_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to refund the payment",
+      },
+      502,
+    );
+  }
+}
+
+app.post(
+  "/api/accounts/:companyId/transactions/:paymentId/refund",
+  async (c) => {
+    const authError = adminAuth(c);
+    if (authError) return authError;
+    const companyId = c.req.param("companyId");
+    if (typeof companyId !== "string" || !COMPANY_ID.test(companyId))
+      return c.json({ error: "invalid_company_id" }, 400);
+    if (
+      !(await listPlatformChildren().catch(() => [])).some(
+        (candidate) => candidate.id === companyId,
+      )
+    )
+      return c.json({ error: "account_not_connected_to_platform" }, 403);
+    return refundCompanyPayment(c, companyId);
+  },
+);
+
+app.post("/api/transactions/:paymentId/refund", async (c) => {
+  const auth = sellerAuth(c);
+  if (auth instanceof Response) return auth;
+  const seller = store.sellerByExternalId(auth.externalId);
+  if (!seller) return c.json({ error: "seller_not_onboarded" }, 409);
+  return refundCompanyPayment(c, seller.company_id);
+});
+
 app.post("/api/onboarding", async (c) => {
   const auth = sellerAuth(c);
   if (auth instanceof Response) return auth;
-  const requestFingerprint = fingerprint(auth);
   try {
-    const local = store.sellerByExternalId(auth.externalId);
-    if (local && (local.email !== auth.email || local.country !== auth.country))
-      return c.json({ error: "seller_identity_mismatch" }, 409);
-    let companyId = local?.company_id;
-    if (!companyId) {
-      const matches = await listChildren(auth.externalId);
-      if (matches.length > 1)
-        return c.json(
-          {
-            error: "ambiguous_connected_accounts",
-            message:
-              "Multiple Whop accounts share this external ID; resolve manually.",
-          },
-          409,
-        );
-      if (matches.length === 1) {
-        companyId = assertSellerMatch(matches[0], auth);
-        store.finishOnboarding(auth.externalId, {
-          external_id: auth.externalId,
-          email: auth.email,
-          country: auth.country,
-          company_id: companyId,
-        });
-      } else {
-        const attempt = store.onboardingAttempt(auth.externalId);
-        if (attempt && attempt.fingerprint !== requestFingerprint)
-          return c.json({ error: "seller_identity_mismatch" }, 409);
-        if (attempt && attempt.status !== "complete")
-          return c.json(
-            {
-              error: "onboarding_attempt_unresolved",
-              message:
-                "A create may be in flight or ambiguous. Retry only after Whop listing reveals the account.",
-            },
-            409,
-          );
-        if (!store.beginOnboarding(auth.externalId, requestFingerprint))
-          return c.json({ error: "onboarding_in_progress" }, 409);
-        let result;
-        try {
-          result = await createWhopSandboxClient().json("companies", {
-            ...postJson({
-              title: `Ledgerly seller ${auth.externalId}`,
-              email: auth.email,
-              parent_company_id: process.env.WHOP_PLATFORM_COMPANY_ID,
-              metadata: { external_id: auth.externalId, country: auth.country },
-            }),
-            headers: {
-              "Content-Type": "application/json",
-              "Idempotency-Key": `ledgerly-onboarding-${requestFingerprint.slice(0, 32)}`,
-            },
-          });
-        } catch (error) {
-          store.markOnboardingAmbiguous(auth.externalId);
-          throw error;
-        }
-        if (!result.response.ok || !isObject(result.data)) {
-          if (
-            result.response.status >= 400 &&
-            result.response.status < 500 &&
-            result.response.status !== 409
-          )
-            store.clearOnboardingAttempt(auth.externalId);
-          else store.markOnboardingAmbiguous(auth.externalId);
-          return c.json(
-            { error: "whop_error", provider: safeProviderError(result.data) },
-            result.response.status >= 400 && result.response.status < 500
-              ? (result.response.status as 400)
-              : 502,
-          );
-        }
-        companyId = assertSellerMatch(result.data, auth);
-        store.finishOnboarding(auth.externalId, {
-          external_id: auth.externalId,
-          email: auth.email,
-          country: auth.country,
-          company_id: companyId,
-        });
-      }
-    }
+    const resolved = await resolveConnectedAccount(auth);
+    if (!resolved.ok) return c.json(resolved.body, resolved.status);
+    const companyId = resolved.companyId;
     const link = await createWhopSandboxClient().json(
       "account_links",
       postJson({
@@ -522,10 +812,10 @@ app.post("/api/checkout", async (c) => {
     await assertOwnedCompany(seller.company_id);
     const request = {
       mode: "payment",
+      account_id: seller.company_id,
       redirect_url: publicUrl(`orders/${body.order_id}/complete`),
       metadata: { order_id: body.order_id },
       plan: {
-        company_id: seller.company_id,
         product: {
           external_identifier: `ledgerly-${body.order_id}`,
           title: body.title.trim(),

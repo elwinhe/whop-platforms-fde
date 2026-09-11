@@ -3,8 +3,8 @@
 // those two fields are absent from the published native checkout schema.
 export interface CheckoutRequest {
   mode: "payment";
+  account_id: string;
   plan: {
-    company_id: string;
     product: { title: string; external_identifier: string };
     visibility: "hidden";
     release_method: "buy_now";
