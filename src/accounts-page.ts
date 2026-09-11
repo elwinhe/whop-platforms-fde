@@ -84,6 +84,29 @@ export const accountsPage = `<!doctype html>
                 </table>
               </div>
             </section>
+            <section id="transactions-card" class="card mt-4 hidden" aria-labelledby="transactions-heading">
+              <div class="card-header">
+                <h2 class="card-title" id="transactions-heading">Transactions</h2>
+                <span class="text-secondary ms-auto" id="transactions-subtitle"></span>
+              </div>
+              <div class="card-body hidden" id="transactions-empty">No transactions for this account yet.</div>
+              <div class="table-responsive hidden" id="transactions-wrap">
+                <table class="table table-vcenter card-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Description</th>
+                      <th class="text-end">Gross</th>
+                      <th class="text-end">Platform fee</th>
+                      <th class="text-end">Net to seller</th>
+                      <th>Status</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transactions-rows"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </div>
       </main>
@@ -153,6 +176,73 @@ export const accountsPage = `<!doctype html>
         }
       }
 
+      const txCard = document.querySelector('#transactions-card');
+      const txSubtitle = document.querySelector('#transactions-subtitle');
+      const txEmpty = document.querySelector('#transactions-empty');
+      const txWrap = document.querySelector('#transactions-wrap');
+      const txRows = document.querySelector('#transactions-rows');
+      const SOURCE_LABELS = {
+        payment: 'Payment',
+        transfer_in: 'Transfer in',
+        transfer_out: 'Transfer out',
+        ledger_only: 'Webhook ledger',
+      };
+
+      function formatMoney(minor, decimals, currency) {
+        if (typeof minor !== 'number') return '—';
+        const value = minor / 10 ** (decimals ?? 2);
+        try {
+          return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency ?? 'usd').toUpperCase() }).format(value);
+        } catch {
+          return value.toFixed(decimals ?? 2) + (currency ? ' ' + currency.toUpperCase() : '');
+        }
+      }
+
+      function renderTransactionRow(tx) {
+        const row = document.createElement('tr');
+        const date = textCell(tx.occurred_at ? new Date(tx.occurred_at).toLocaleString() : '—', 'text-nowrap');
+        row.append(date);
+        const description = document.createElement('td');
+        const title = document.createElement('div');
+        title.textContent = tx.description || 'Transaction';
+        const ref = document.createElement('div');
+        ref.className = 'text-secondary account-id';
+        ref.textContent = tx.order_id ? 'Order ' + tx.order_id : tx.resource_id;
+        description.append(title, ref);
+        row.append(description);
+        for (const amount of [tx.gross_minor, tx.fee_minor, tx.net_minor]) {
+          row.append(textCell(formatMoney(amount, tx.currency_decimals, tx.currency), 'text-end text-nowrap'));
+        }
+        const statusText = String(tx.status || 'unknown').replaceAll('_', ' ')
+          + (tx.settlement === 'pending' ? ' · settlement pending' : tx.settlement ? ' · ' + tx.settlement.replaceAll('_', ' ') : '');
+        row.append(textCell(statusText));
+        row.append(textCell((SOURCE_LABELS[tx.source] ?? tx.source) + (tx.ledger_recorded ? ' · in webhook ledger' : '')));
+        txRows.append(row);
+      }
+
+      async function loadTransactions(account, button) {
+        button.disabled = true;
+        txCard.classList.add('hidden');
+        txRows.replaceChildren();
+        setStatus('Loading transactions for ' + (account.external_id ?? account.company_id) + '…');
+        try {
+          const data = await request('/api/accounts/' + encodeURIComponent(account.company_id) + '/transactions');
+          const list = Array.isArray(data.transactions) ? data.transactions : [];
+          txSubtitle.textContent = (account.external_id ?? account.company_id) + ' · ' + account.company_id;
+          txEmpty.classList.toggle('hidden', list.length > 0);
+          txWrap.classList.toggle('hidden', list.length === 0);
+          for (const tx of list) renderTransactionRow(tx);
+          txCard.classList.remove('hidden');
+          setStatus(list.length
+            ? list.length + (list.length === 1 ? ' transaction' : ' transactions') + ' loaded from Whop and the local webhook ledger.'
+            : 'No transactions were found for this account.', 'success');
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : 'Unable to load transactions.', 'error');
+        } finally {
+          button.disabled = false;
+        }
+      }
+
       function renderAccount(account) {
         const row = document.createElement('tr');
         const identity = document.createElement('td');
@@ -191,6 +281,12 @@ export const accountsPage = `<!doctype html>
 
         const actions = document.createElement('td');
         actions.className = 'text-end text-nowrap';
+        const transactions = document.createElement('button');
+        transactions.type = 'button';
+        transactions.className = 'btn btn-sm btn-outline-secondary me-2';
+        transactions.textContent = 'Transactions';
+        transactions.addEventListener('click', () => loadTransactions(account, transactions));
+        actions.append(transactions);
         const onboarding = document.createElement('button');
         onboarding.type = 'button';
         onboarding.className = 'btn btn-sm btn-outline-primary me-2';
@@ -216,7 +312,9 @@ export const accountsPage = `<!doctype html>
         refreshButton.disabled = true;
         tokenInput.disabled = true;
         card.classList.add('hidden');
+        txCard.classList.add('hidden');
         rows.replaceChildren();
+        txRows.replaceChildren();
         count.textContent = '';
         setStatus('Loading connected accounts…');
         try {

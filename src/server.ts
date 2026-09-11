@@ -23,6 +23,7 @@ import {
 } from "./domain.js";
 import { payoutsPage } from "./payouts-page.js";
 import { LedgerStore } from "./store.js";
+import { loadCompanyTransactions } from "./transactions.js";
 import { createWhopSandboxClient } from "./whop.js";
 
 const app = new Hono();
@@ -371,6 +372,61 @@ app.post("/api/accounts/:companyId/onboarding", (c) =>
 app.post("/api/accounts/:companyId/payouts-portal", (c) =>
   createOperatorAccountLink(c, "payouts_portal"),
 );
+
+app.get("/api/accounts/:companyId/transactions", async (c) => {
+  const authError = adminAuth(c);
+  if (authError) return authError;
+  const companyId = c.req.param("companyId");
+  if (typeof companyId !== "string" || !COMPANY_ID.test(companyId))
+    return c.json({ error: "invalid_company_id" }, 400);
+  try {
+    if (
+      !(await listPlatformChildren()).some(
+        (candidate) => candidate.id === companyId,
+      )
+    )
+      return c.json({ error: "account_not_connected_to_platform" }, 403);
+    return c.json({
+      company_id: companyId,
+      transactions: await loadCompanyTransactions(store, companyId),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "transactions_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to load transactions",
+      },
+      502,
+    );
+  }
+});
+
+app.get("/api/transactions", async (c) => {
+  const auth = sellerAuth(c);
+  if (auth instanceof Response) return auth;
+  const seller = store.sellerByExternalId(auth.externalId);
+  if (!seller) return c.json({ error: "seller_not_onboarded" }, 409);
+  try {
+    return c.json({
+      company_id: seller.company_id,
+      transactions: await loadCompanyTransactions(store, seller.company_id),
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "transactions_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to load transactions",
+      },
+      502,
+    );
+  }
+});
 
 app.post("/api/onboarding", async (c) => {
   const auth = sellerAuth(c);

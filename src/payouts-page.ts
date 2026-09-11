@@ -137,18 +137,35 @@ export const payoutsPage = `<!doctype html>
                   </div>
                 </div>
               </section>
-              <section class="col-12" aria-labelledby="history-heading">
-                <div class="card">
-                  <div class="card-header">
-                    <h2 class="card-title" id="history-heading">Payout history</h2>
-                  </div>
-                  <div class="card-body">
-                    <div class="slot-loading" id="history-loading">Loading withdrawal history…</div>
-                    <div id="history" class="slot"></div>
-                  </div>
-                </div>
-              </section>
             </div>
+            <section id="transactions-card" class="card mt-4 hidden" aria-labelledby="transactions-heading">
+              <div class="card-header">
+                <h2 class="card-title" id="transactions-heading">Transactions</h2>
+                <span class="text-secondary ms-auto" id="transactions-count"></span>
+              </div>
+              <div class="card-body" id="transactions-status-body">
+                <div id="transactions-status" class="payout-status" role="status" aria-live="polite">Loading transactions…</div>
+              </div>
+              <div class="table-responsive hidden" id="transactions-table-wrap">
+                <table class="table table-vcenter card-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Description</th>
+                      <th class="text-end">Gross</th>
+                      <th class="text-end">Platform fee</th>
+                      <th class="text-end">Net to seller</th>
+                      <th>Status</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transactions-rows"></tbody>
+                </table>
+              </div>
+              <div class="card-footer text-secondary small">
+                Net is the seller share after the 8% platform fee and Whop processing fees. Paid sales stay pending until Whop settles funds to the available balance.
+              </div>
+            </section>
             <p class="text-secondary small mt-4">
               Payouts powered by Whop. If embedded controls cannot load, use the hosted portal.
             </p>
@@ -164,6 +181,110 @@ export const payoutsPage = `<!doctype html>
       const portal = document.querySelector('#portal');
       let session;
       let loadAttempt = 0;
+
+      const txCard = document.querySelector('#transactions-card');
+      const txStatusBody = document.querySelector('#transactions-status-body');
+      const txStatus = document.querySelector('#transactions-status');
+      const txWrap = document.querySelector('#transactions-table-wrap');
+      const txRows = document.querySelector('#transactions-rows');
+      const txCount = document.querySelector('#transactions-count');
+      const SOURCE_LABELS = {
+        payment: 'Payment',
+        transfer_in: 'Transfer in',
+        transfer_out: 'Transfer out',
+        ledger_only: 'Webhook ledger',
+      };
+
+      function formatMoney(minor, decimals, currency) {
+        if (typeof minor !== 'number') return '—';
+        const value = minor / 10 ** (decimals ?? 2);
+        try {
+          return new Intl.NumberFormat(undefined, { style: 'currency', currency: (currency ?? 'usd').toUpperCase() }).format(value);
+        } catch {
+          return value.toFixed(decimals ?? 2) + (currency ? ' ' + currency.toUpperCase() : '');
+        }
+      }
+
+      function renderTransaction(tx) {
+        const row = document.createElement('tr');
+        const date = document.createElement('td');
+        date.className = 'text-nowrap';
+        date.textContent = tx.occurred_at ? new Date(tx.occurred_at).toLocaleString() : '—';
+        row.append(date);
+        const description = document.createElement('td');
+        const title = document.createElement('div');
+        title.textContent = tx.description || 'Transaction';
+        const ref = document.createElement('div');
+        ref.className = 'text-secondary small';
+        ref.textContent = tx.order_id ? 'Order ' + tx.order_id : tx.resource_id;
+        description.append(title, ref);
+        row.append(description);
+        for (const amount of [tx.gross_minor, tx.fee_minor, tx.net_minor]) {
+          const cell = document.createElement('td');
+          cell.className = 'text-end text-nowrap';
+          cell.textContent = formatMoney(amount, tx.currency_decimals, tx.currency);
+          row.append(cell);
+        }
+        const statusCell = document.createElement('td');
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + (
+          tx.settlement === 'refunded' || tx.settlement === 'partially_refunded'
+            ? 'bg-orange-lt'
+            : tx.settlement === 'pending'
+              ? 'bg-yellow-lt'
+              : ['paid', 'succeeded', 'completed'].includes(tx.status)
+                ? 'bg-green-lt'
+                : 'bg-secondary-lt'
+        );
+        badge.textContent = String(tx.status || 'unknown').replaceAll('_', ' ');
+        statusCell.append(badge);
+        if (tx.settlement) {
+          const note = document.createElement('div');
+          note.className = 'text-secondary small mt-1';
+          note.textContent = tx.settlement === 'pending' ? 'settlement pending' : tx.settlement.replaceAll('_', ' ');
+          statusCell.append(note);
+        }
+        row.append(statusCell);
+        const source = document.createElement('td');
+        const sourceLabel = document.createElement('div');
+        sourceLabel.textContent = SOURCE_LABELS[tx.source] ?? tx.source;
+        source.append(sourceLabel);
+        if (tx.ledger_recorded) {
+          const mark = document.createElement('div');
+          mark.className = 'text-secondary small';
+          mark.textContent = 'in webhook ledger';
+          source.append(mark);
+        }
+        row.append(source);
+        txRows.append(row);
+      }
+
+      async function loadTransactions(request, attempt) {
+        txCard.classList.remove('hidden');
+        txWrap.classList.add('hidden');
+        txRows.replaceChildren();
+        txCount.textContent = '';
+        txStatusBody.classList.remove('hidden');
+        txStatus.className = 'payout-status';
+        txStatus.textContent = 'Loading transactions…';
+        try {
+          const data = await request('/api/transactions');
+          if (attempt !== loadAttempt) return;
+          const list = Array.isArray(data.transactions) ? data.transactions : [];
+          if (!list.length) {
+            txStatus.textContent = 'No transactions yet. Create and pay a sandbox checkout above.';
+            return;
+          }
+          for (const tx of list) renderTransaction(tx);
+          txCount.textContent = list.length + (list.length === 1 ? ' transaction' : ' transactions');
+          txStatusBody.classList.add('hidden');
+          txWrap.classList.remove('hidden');
+        } catch (error) {
+          if (attempt !== loadAttempt) return;
+          txStatus.className = 'payout-status error';
+          txStatus.textContent = error instanceof Error ? error.message : 'Unable to load transactions.';
+        }
+      }
 
       const checkoutButton = document.querySelector('#checkout-create');
       const checkoutOrder = document.querySelector('#checkout-order');
@@ -227,9 +348,9 @@ export const payoutsPage = `<!doctype html>
           status.className = payoutError ? 'payout-status error' : 'payout-status';
           status.textContent = payoutError
             ? payoutError + (portal.hasAttribute('href') ? ' Open the hosted portal to continue.' : '')
-            : readySlots.size === 3
+            : readySlots.size === 2
               ? 'Payout controls loaded.'
-              : 'Loading payout controls (' + readySlots.size + '/3 ready)…';
+              : 'Loading payout controls (' + readySlots.size + '/2 ready)…';
         };
         async function request(url, options = {}) {
           const response = await fetch(url, {
@@ -259,11 +380,13 @@ export const payoutsPage = `<!doctype html>
         for (const loading of elements.querySelectorAll('.slot-loading')) loading.classList.remove('hidden');
         portal.classList.add('hidden');
         portal.removeAttribute('href');
+        txCard.classList.add('hidden');
         try {
           session?.destroy();
           session = undefined;
           const profile = await request('/api/payout-context');
           updateStatus();
+          void loadTransactions(request, attempt);
           void request('/api/payout-portal', { method: 'POST' })
             .then((link) => {
               if (attempt !== loadAttempt) return;
@@ -308,7 +431,6 @@ export const payoutsPage = `<!doctype html>
           session.on('tokenRefreshError', onError);
           session.createElement('balance-element', { onReady: onReady('#balance') }).mount('#balance');
           session.createElement('withdraw-button-element', { onReady: onReady('#withdraw') }).mount('#withdraw');
-          session.createElement('withdrawals-element', { onReady: onReady('#history') }).mount('#history');
         } catch (error) {
           session?.destroy();
           session = undefined;
