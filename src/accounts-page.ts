@@ -61,6 +61,30 @@ export const accountsPage = `<!doctype html>
               </div>
             </section>
 
+            <section class="card mb-4 hidden" id="create-card" aria-labelledby="create-heading">
+              <div class="card-body">
+                <h2 class="card-title mb-3" id="create-heading">Create connected account</h2>
+                <div class="row g-2">
+                  <div class="col-sm-4">
+                    <label class="form-label" for="create-external-id">External ID</label>
+                    <input class="form-control" id="create-external-id" autocomplete="off" placeholder="ledgerly_seller_mx" />
+                  </div>
+                  <div class="col-sm-4">
+                    <label class="form-label" for="create-email">Email</label>
+                    <input class="form-control" id="create-email" type="email" autocomplete="off" placeholder="seller@example.com" />
+                  </div>
+                  <div class="col-sm-2">
+                    <label class="form-label" for="create-country">Country</label>
+                    <input class="form-control" id="create-country" maxlength="2" autocomplete="off" placeholder="US" />
+                  </div>
+                  <div class="col-sm-2 d-flex align-items-end">
+                    <button class="btn btn-primary w-100" id="create-account" type="button">Create</button>
+                  </div>
+                </div>
+                <div class="form-hint">Reuses the idempotent onboarding flow: an existing account with the same external ID is returned instead of duplicated.</div>
+              </div>
+            </section>
+
             <div id="status" class="alert alert-info status-message" role="status" aria-live="polite">Enter the administrator token to load connected accounts.</div>
             <section id="accounts-card" class="card hidden" aria-labelledby="accounts-heading">
               <div class="card-header">
@@ -119,6 +143,11 @@ export const accountsPage = `<!doctype html>
       const card = document.querySelector('#accounts-card');
       const rows = document.querySelector('#account-rows');
       const count = document.querySelector('#count');
+      const createCard = document.querySelector('#create-card');
+      const createButton = document.querySelector('#create-account');
+      const createExternalId = document.querySelector('#create-external-id');
+      const createEmail = document.querySelector('#create-email');
+      const createCountry = document.querySelector('#create-country');
 
       function setStatus(message, kind = 'info') {
         status.className = 'alert status-message alert-' + (kind === 'error' ? 'danger' : kind);
@@ -298,8 +327,59 @@ export const accountsPage = `<!doctype html>
         payouts.textContent = 'Payouts ↗';
         payouts.addEventListener('click', () => openAccountLink(account.company_id, 'payouts-portal', payouts));
         actions.append(onboarding, payouts);
+        if (account.suspension.suspended !== true) {
+          const suspend = document.createElement('button');
+          suspend.type = 'button';
+          suspend.className = 'btn btn-sm btn-outline-danger ms-2';
+          suspend.textContent = 'Suspend';
+          suspend.addEventListener('click', () => suspendAccount(account, suspend));
+          actions.append(suspend);
+        }
         row.append(actions);
         rows.append(row);
+      }
+
+      async function createAccount() {
+        const externalId = createExternalId.value.trim();
+        const email = createEmail.value.trim();
+        const country = createCountry.value.trim().toUpperCase();
+        if (!externalId || !email || !/^[A-Z]{2}$/.test(country)) {
+          setStatus('External ID, email, and a two-letter country are required.', 'error');
+          return;
+        }
+        createButton.disabled = true;
+        setStatus('Creating connected account…');
+        try {
+          const data = await request('/api/accounts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ external_id: externalId, email, country }),
+          });
+          createExternalId.value = '';
+          createEmail.value = '';
+          createCountry.value = '';
+          await loadAccounts();
+          setStatus((data.created ? 'Created ' : 'Found existing account ') + data.company_id + ' for ' + data.external_id + '.', 'success');
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : 'Unable to create the connected account.', 'error');
+        } finally {
+          createButton.disabled = false;
+        }
+      }
+
+      async function suspendAccount(account, button) {
+        const label = account.external_id ?? account.company_id;
+        if (!window.confirm('Suspend ' + label + '? The Whop API does not expose reactivation, so this cannot be undone from this panel.')) return;
+        button.disabled = true;
+        setStatus('Suspending ' + label + '…');
+        try {
+          await request('/api/accounts/' + encodeURIComponent(account.company_id) + '/suspend', { method: 'POST' });
+          await loadAccounts();
+          setStatus(label + ' is suspended.', 'success');
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : 'Unable to suspend the account.', 'error');
+          button.disabled = false;
+        }
       }
 
       async function loadAccounts() {
@@ -321,11 +401,12 @@ export const accountsPage = `<!doctype html>
           const data = await request('/api/accounts');
           for (const account of data.accounts) renderAccount(account);
           count.textContent = data.accounts.length + (data.accounts.length === 1 ? ' account' : ' accounts');
+          createCard.classList.remove('hidden');
           if (data.accounts.length) {
             card.classList.remove('hidden');
             setStatus('Connected accounts refreshed from Whop.', 'success');
           } else {
-            setStatus('No connected accounts were found for this platform.', 'info');
+            setStatus('No connected accounts were found for this platform. Create one above.', 'info');
           }
         } catch (error) {
           setStatus(error instanceof Error ? error.message : 'Unable to load connected accounts.', 'error');
@@ -339,6 +420,10 @@ export const accountsPage = `<!doctype html>
       loadButton.addEventListener('click', loadAccounts);
       refreshButton.addEventListener('click', loadAccounts);
       tokenInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') loadAccounts(); });
+      createButton.addEventListener('click', createAccount);
+      for (const field of [createExternalId, createEmail, createCountry]) {
+        field.addEventListener('keydown', (event) => { if (event.key === 'Enter') createAccount(); });
+      }
     </script>
   </body>
 </html>`;

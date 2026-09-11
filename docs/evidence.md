@@ -51,3 +51,25 @@ US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
 ## Submission
 
 - Loom URL: https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
+
+## Pre-demo verification (2026-09-11, code-driven)
+
+A 14-point end-to-end suite ran against the live server and sandbox: 10 passed; all 4 failures share one root cause (API-key scopes, below).
+
+Verified working end to end: admin account listing; idempotent seller onboarding (existing `biz_q5tPMk6MCfoLOm` returned, KYC link minted); checkout creation and idempotent reuse (`reused: true`, 8% fee = 200 minor units, purchase URL present); scoped payout-token mint; hosted payouts-portal link; seller and operator transactions views (4 rows, $2.00 fee split visible); reconciliation; auth boundaries (seller tokens rejected from admin endpoints, bad tokens 401 everywhere).
+
+### Key-scope regressions after the permission rework
+
+- `POST /companies` now returns HTTP `403` "You are not authorized" — `company:create_child` is no longer granted, so connected-account creation (seed script, admin create) is blocked until the scope is re-added.
+- `POST /accounts/{id}/suspend` returns HTTP `403` "Business account API key is not authorized for the company:suspend_child scope."
+- Error-quality inconsistency worth noting: the suspend error names the missing scope; the companies error does not.
+
+### Money-movement state
+
+- Balances remain settlement-locked: platform `$31.37` pending / `$0.00` available; US seller `$85.48` pending / `$0.00` available. Refund and transfer stay blocked in sandbox on funds availability.
+- The platform account itself is unverified (`verification: null`) and its `transfer` and `standard_payout` capabilities are `inactive` — a second, independent transfer blocker. `POST /account_links` with the platform's own `account_id` and `use_case: "account_onboarding"` returns HTTP `200`, so platform KYC is completable through the hosted flow.
+- `POST /deposits` (`destination` = platform, `amount: 50`) returns a raw HTTP `500` from Whop — the sandbox deposit path fails at the API as well as in the dashboard.
+
+### Operator account management
+
+`POST /api/accounts` (create) and `POST /api/accounts/:companyId/suspend` were added to the operator surface, reusing the same idempotent create-or-fetch flow as seller onboarding. Structural checks pass: identity-mismatch 409, non-child suspension 403, admin-only auth. Live create/suspend proof is pending the two key scopes above.
