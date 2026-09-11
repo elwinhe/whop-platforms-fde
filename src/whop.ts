@@ -1,4 +1,17 @@
-const SANDBOX_BASE_URL = new URL("https://sandbox-api.whop.com/api/v1/");
+const BASE_URLS = {
+  sandbox: new URL("https://sandbox-api.whop.com/api/v1/"),
+  production: new URL("https://api.whop.com/api/v1/"),
+} as const;
+
+export type WhopEnvironment = keyof typeof BASE_URLS;
+
+export function whopEnvironment(): WhopEnvironment {
+  const raw = (process.env.WHOP_ENV ?? "sandbox").trim().toLowerCase();
+  if (raw !== "sandbox" && raw !== "production") {
+    throw new Error('WHOP_ENV must be "sandbox" or "production"');
+  }
+  return raw;
+}
 
 export type WhopJsonResponse = { response: Response; data: unknown };
 
@@ -9,25 +22,26 @@ export function createWhopSandboxClient(options: {
 } = {}) {
   const bearerToken = options.bearerToken ?? options.apiKey ?? process.env.WHOP_API_KEY;
   const timeoutMs = options.timeoutMs ?? Number(process.env.WHOP_TIMEOUT_MS ?? 5_000);
+  const baseUrl = BASE_URLS[whopEnvironment()];
 
-  if (!bearerToken) throw new Error("A Whop sandbox bearer credential is required");
+  if (!bearerToken) throw new Error("A Whop bearer credential is required");
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error("WHOP_TIMEOUT_MS must be a positive safe integer");
   }
 
   return {
     request(path: string, init: RequestInit = {}) {
-      const url = new URL(path, SANDBOX_BASE_URL);
+      const url = new URL(path, baseUrl);
       const isRelativePath =
         !/^[a-z][a-z\d+.-]*:/i.test(path) &&
         !path.startsWith("/") &&
         !path.startsWith("\\");
       if (
         !isRelativePath ||
-        url.origin !== SANDBOX_BASE_URL.origin ||
-        !url.pathname.startsWith(SANDBOX_BASE_URL.pathname)
+        url.origin !== baseUrl.origin ||
+        !url.pathname.startsWith(baseUrl.pathname)
       ) {
-        throw new Error("Whop client accepts sandbox-relative paths only");
+        throw new Error("Whop client accepts API-relative paths only");
       }
 
       const headers = new Headers(init.headers);

@@ -107,8 +107,8 @@ export const payoutsPage = `<!doctype html>
                 <input class="form-control mb-3" id="checkout-order" aria-describedby="checkout-help" />
                 <p class="text-secondary small" id="checkout-help">Keep this ID when retrying. Change it only for a new order. Creating a link does not charge a card.</p>
                 <div class="d-flex gap-2 flex-wrap">
-                  <button class="btn btn-primary" id="checkout-create">Create $25 sandbox checkout</button>
-                  <a class="btn btn-outline-primary hidden" id="checkout-link" target="_blank" rel="noreferrer">Open sandbox checkout ↗</a>
+                  <button class="btn btn-primary" id="checkout-create">Create $25 __WHOP_ENV_LABEL__ checkout</button>
+                  <a class="btn btn-outline-primary hidden" id="checkout-link" target="_blank" rel="noreferrer">Open __WHOP_ENV_LABEL__ checkout ↗</a>
                 </div>
                 <div id="checkout-status" class="payout-status" role="status" aria-live="polite"></div>
               </div>
@@ -286,7 +286,7 @@ export const payoutsPage = `<!doctype html>
           if (attempt !== loadAttempt) return;
           const list = Array.isArray(data.transactions) ? data.transactions : [];
           if (!list.length) {
-            txStatus.textContent = 'No transactions yet. Create and pay a sandbox checkout above.';
+            txStatus.textContent = 'No transactions yet. Create and pay a __WHOP_ENV_LABEL__ checkout above.';
             return;
           }
           for (const tx of list) renderTransaction(tx, request, attempt);
@@ -324,7 +324,7 @@ export const payoutsPage = `<!doctype html>
           return;
         }
         checkoutButton.disabled = checkoutOrder.disabled = tokenInput.disabled = load.disabled = true;
-        checkoutStatus.textContent = 'Creating sandbox checkout…';
+        checkoutStatus.textContent = 'Creating __WHOP_ENV_LABEL__ checkout…';
         try {
           const response = await fetch('/api/checkout', {
             method: 'POST',
@@ -343,11 +343,12 @@ export const payoutsPage = `<!doctype html>
           const data = await response.json();
           if (!response.ok) throw new Error(data.message || data.provider?.message || data.error || 'Checkout failed.');
           const url = new URL(data.checkout?.purchase_url);
-          if (url.protocol !== 'https:' || url.hostname !== 'sandbox.whop.com')
-            throw new Error('No valid sandbox checkout URL returned.');
+          const checkoutHost = '__WHOP_CHECKOUT_HOST__';
+          if (url.protocol !== 'https:' || (url.hostname !== checkoutHost && !url.hostname.endsWith('.' + checkoutHost)))
+            throw new Error('No valid __WHOP_ENV_LABEL__ checkout URL returned.');
           checkoutLink.href = url.href;
           checkoutLink.classList.remove('hidden');
-          checkoutStatus.textContent = 'Checkout ready: $25 USD with a $2 platform fee. Open the link to pay with a sandbox card.';
+          checkoutStatus.textContent = 'Checkout ready: $25 USD with a $2 platform fee. Open the link to complete payment.';
         } catch (error) {
           checkoutStatus.className = 'payout-status error';
           checkoutStatus.textContent = error instanceof Error ? error.message : 'Unable to create checkout.';
@@ -424,7 +425,7 @@ export const payoutsPage = `<!doctype html>
             });
 
           const { loadWhopElements } = await import('/vendor/whop-elements/index.mjs');
-          const whop = await loadWhopElements({ environment: 'sandbox' });
+          const whop = await loadWhopElements({ environment: '__WHOP_ENV__' });
           if (!whop) throw new Error('Whop Elements is unavailable.');
           const onReady = (slot) => () => {
             if (attempt !== loadAttempt) return;

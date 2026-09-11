@@ -28,7 +28,7 @@ import {
   findCompanyPayment,
   loadCompanyTransactions,
 } from "./transactions.js";
-import { createWhopSandboxClient } from "./whop.js";
+import { createWhopSandboxClient, whopEnvironment } from "./whop.js";
 
 const app = new Hono();
 const store = new LedgerStore();
@@ -422,9 +422,21 @@ async function createOperatorAccountLink(
   }
 }
 
+const whopEnv = whopEnvironment();
+const renderPage = (page: string) =>
+  page
+    .replaceAll("__WHOP_ENV__", whopEnv)
+    .replaceAll("__WHOP_ENV_LABEL__", whopEnv === "sandbox" ? "sandbox" : "live")
+    .replaceAll(
+      "__WHOP_CHECKOUT_HOST__",
+      whopEnv === "sandbox" ? "sandbox.whop.com" : "whop.com",
+    );
+const renderedPayoutsPage = renderPage(payoutsPage);
+const renderedAccountsPage = renderPage(accountsPage);
+
 app.get("/health", (c) => c.json({ status: "ok" }));
-app.get("/", (c) => c.html(payoutsPage));
-app.get("/accounts", (c) => c.html(accountsPage));
+app.get("/", (c) => c.html(renderedPayoutsPage));
+app.get("/accounts", (c) => c.html(renderedAccountsPage));
 app.get("/orders/:orderId/complete", (c) => c.redirect("/"));
 for (const path of [
   "/onboarding/complete",
