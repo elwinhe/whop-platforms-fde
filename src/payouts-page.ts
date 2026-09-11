@@ -97,7 +97,7 @@ export const payoutsPage = `<!doctype html>
                 </div>
               </div>
             </section>
-            <section class="card mb-4" aria-labelledby="checkout-heading">
+            <section id="checkout-card" class="card mb-4 hidden" aria-labelledby="checkout-heading">
               <div class="card-header">
                 <h2 class="card-title" id="checkout-heading">Sandbox checkout</h2>
               </div>
@@ -300,6 +300,7 @@ export const payoutsPage = `<!doctype html>
         }
       }
 
+      const checkoutCard = document.querySelector('#checkout-card');
       const checkoutButton = document.querySelector('#checkout-create');
       const checkoutOrder = document.querySelector('#checkout-order');
       const checkoutLink = document.querySelector('#checkout-link');
@@ -310,7 +311,10 @@ export const payoutsPage = `<!doctype html>
         checkoutLink.removeAttribute('href');
         checkoutStatus.textContent = '';
       };
-      tokenInput.addEventListener('input', clearCheckout);
+      tokenInput.addEventListener('input', () => {
+        clearCheckout();
+        checkoutCard.classList.add('hidden');
+      });
       checkoutOrder.addEventListener('input', clearCheckout);
       checkoutButton.addEventListener('click', async () => {
         clearCheckout();
@@ -395,10 +399,13 @@ export const payoutsPage = `<!doctype html>
         portal.classList.add('hidden');
         portal.removeAttribute('href');
         txCard.classList.add('hidden');
+        let tokenValidated = false;
         try {
           session?.destroy();
           session = undefined;
           const profile = await request('/api/payout-context');
+          tokenValidated = true;
+          checkoutCard.classList.remove('hidden');
           updateStatus();
           void loadTransactions(request, attempt);
           void request('/api/payout-portal', { method: 'POST' })
@@ -451,6 +458,7 @@ export const payoutsPage = `<!doctype html>
           payoutError = error instanceof Error ? error.message : 'Unable to load payouts.';
           updateStatus();
           elements.classList.add('hidden');
+          if (!tokenValidated) checkoutCard.classList.add('hidden');
         } finally {
           load.disabled = false;
           checkoutButton.disabled = false;
