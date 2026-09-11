@@ -18,6 +18,10 @@ export type TransactionRow = {
   currency_decimals: number;
   gross_minor: number | null;
   fee_minor: number | null;
+  fee_source?: "provider" | "estimated" | "unknown";
+  fee_refunded_minor?: number | null;
+  fee_refund_status?: "returned" | "partially_returned" | "not_returned" | "unverified";
+  fee_id?: string | null;
   net_minor: number | null;
   status: string;
   settlement: "pending" | "refunded" | "partially_refunded" | null;
@@ -117,6 +121,12 @@ function paymentTransaction(
   const grossMinor = moneyToMinor(row.total, decimals);
   const netMinor = moneyToMinor(row.amount_after_fees, decimals);
   const refundedMinor = moneyToMinor(row.refunded_amount, decimals) ?? 0;
+  const providerFeeMinor = moneyToMinor(fee?.amount, decimals);
+  const feeMinor = providerFeeMinor ?? derivedFeeMinor(grossMinor, netMinor);
+  const feeRefundedMinor = moneyToMinor(fee?.amount_refunded, decimals);
+  const validFeeRefund = providerFeeMinor !== null && providerFeeMinor > 0 &&
+    feeRefundedMinor !== null && feeRefundedMinor >= 0 && feeRefundedMinor <= providerFeeMinor &&
+    fee?.currency === currency;
   return {
     source: "payment",
     resource_id: row.id,
@@ -130,9 +140,15 @@ function paymentTransaction(
     currency,
     currency_decimals: decimals,
     gross_minor: grossMinor,
-    fee_minor:
-      moneyToMinor(fee?.amount, decimals) ??
-      derivedFeeMinor(grossMinor, netMinor),
+    fee_minor: feeMinor,
+    fee_source: providerFeeMinor !== null ? "provider" : feeMinor !== null ? "estimated" : "unknown",
+    fee_refunded_minor: validFeeRefund ? feeRefundedMinor : null,
+    fee_refund_status: !validFeeRefund
+      ? "unverified"
+      : feeRefundedMinor === providerFeeMinor
+        ? "returned"
+        : feeRefundedMinor > 0 ? "partially_returned" : "not_returned",
+    fee_id: typeof fee?.id === "string" ? fee.id : null,
     net_minor: netMinor,
     status,
     settlement:
