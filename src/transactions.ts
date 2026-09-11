@@ -84,7 +84,9 @@ function moneyToMinor(value: unknown, fallbackDecimals: number): number | null {
 // Production payment payloads omit application_fee; gross minus net bundles the
 // platform fee with Whop's processing fee. Re-derive the platform fee from the
 // checkout fee policy, accepting it only when it fits inside the observed
-// deduction (the remainder is Whop's processing fee).
+// deduction (the remainder is Whop's processing fee). Refunds leave total and
+// amount_after_fees untouched and do not reverse the fee, so the derivation
+// stays valid on refunded rows.
 function derivedFeeMinor(
   grossMinor: number | null,
   netMinor: number | null,
@@ -130,7 +132,7 @@ function paymentTransaction(
     gross_minor: grossMinor,
     fee_minor:
       moneyToMinor(fee?.amount, decimals) ??
-      (refundedMinor > 0 ? null : derivedFeeMinor(grossMinor, netMinor)),
+      derivedFeeMinor(grossMinor, netMinor),
     net_minor: netMinor,
     status,
     settlement:

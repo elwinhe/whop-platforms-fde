@@ -78,3 +78,10 @@ Verified working end to end: admin account listing; idempotent seller onboarding
 
 - On production, `checkout_configurations` ignores `plan.company_id` and attributes the dynamic plan to the API key's own company — application-fee validation then fails with "can only be set for connected accounts (companies with a parent company)". Sandbox accepted the nested shape, masking the drift.
 - Fix: pass top-level `account_id` (the documented example's shape). Verified live: `ch_AjToR3sy6bPNsos` created against the US seller (`biz_ueaMn4Gey9kg6b`) with the 8% fee. All three production sellers confirmed as parent-linked children via `GET /companies?parent_company_id=...`; note the single-company retrieve endpoint does not serialize `parent_company_id`.
+
+### Production money flows completed (transfer → refund)
+
+- Payment payloads on production omit `application_fee` entirely; the transactions view re-derives the platform fee from the checkout policy (rounded 8%), bounded by the observed gross−net deduction. Cross-checked live: a no-fee probe charge on the parent netted `$23.75` of `$25.00` (Whop processing fee `$1.25` in isolation), and the seller sale netted `$21.75` (`$3.25` = `$2.00` platform fee + `$1.25` processing).
+- Transfer: `$25.00` parent → US seller (`ctt_TpCjAkNjPEo0cj`, idempotence key `ledgerly-transfer-us-refund-funding-1`) succeeded immediately; seller available went `$0.00` → `$25.00`. Sale proceeds themselves stay pending until settlement, which is why the seller could not self-fund the refund.
+- Refund: full `$25.00` on `pay_yRILVDwzGPjc5k` via the operator refund endpoint; `refunded_amount` = `$25.00`, transactions view shows `settlement: refunded`.
+- Ledger outcome: the refund debits the seller's available balance by the gross (`$25.00` → `-$25.00` pending settlement of the `$21.75` sale net), so a fully refunded seller ends `-$3.25` — the unreversed fees. The platform's `$2.00` application fee is **not** clawed back automatically; making the seller whole requires an explicit fee-reversal transfer.
