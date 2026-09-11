@@ -427,6 +427,11 @@ const renderPage = (page: string) =>
   page
     .replaceAll("__WHOP_ENV__", whopEnv)
     .replaceAll("__WHOP_ENV_LABEL__", whopEnv === "sandbox" ? "sandbox" : "live")
+    .replaceAll("__WHOP_ENV_TITLE__", whopEnv === "sandbox" ? "Sandbox" : "Live")
+    .replaceAll(
+      "__WHOP_ENV_BADGE_CLASS__",
+      whopEnv === "sandbox" ? "bg-yellow-lt" : "bg-green-lt",
+    )
     .replaceAll(
       "__WHOP_CHECKOUT_HOST__",
       whopEnv === "sandbox" ? "sandbox.whop.com" : "whop.com",

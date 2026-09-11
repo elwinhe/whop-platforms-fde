@@ -53,7 +53,7 @@ export const payoutsPage = `<!doctype html>
           </a>
           <div class="d-flex align-items-center gap-3">
             <a class="nav-link" href="/accounts">Connected accounts</a>
-            <span class="badge bg-yellow-lt">Sandbox</span>
+            <span class="badge __WHOP_ENV_BADGE_CLASS__">__WHOP_ENV_TITLE__</span>
           </div>
         </div>
       </header>
@@ -99,7 +99,7 @@ export const payoutsPage = `<!doctype html>
             </section>
             <section id="checkout-card" class="card mb-4 hidden" aria-labelledby="checkout-heading">
               <div class="card-header">
-                <h2 class="card-title" id="checkout-heading">Sandbox checkout</h2>
+                <h2 class="card-title" id="checkout-heading">__WHOP_ENV_TITLE__ checkout</h2>
               </div>
               <div class="card-body">
                 <p class="text-secondary">Acme Preset Pack · $25 USD · $2 platform fee (8%). Uses the seller session entered above.</p>
@@ -251,7 +251,7 @@ export const payoutsPage = `<!doctype html>
           refund.textContent = 'Refund';
           refund.addEventListener('click', async () => {
             const amount = formatMoney(tx.gross_minor, tx.currency_decimals, tx.currency);
-            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is reversed with it.')) return;
+            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is not returned automatically.')) return;
             refund.disabled = true;
             refund.textContent = 'Refunding…';
             note.textContent = '';

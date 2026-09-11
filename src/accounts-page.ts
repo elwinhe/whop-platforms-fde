@@ -32,7 +32,7 @@ export const accountsPage = `<!doctype html>
           </a>
           <div class="d-flex align-items-center gap-3">
             <a class="nav-link" href="/">Seller payouts</a>
-            <span class="badge bg-yellow-lt">Sandbox</span>
+            <span class="badge __WHOP_ENV_BADGE_CLASS__">__WHOP_ENV_TITLE__</span>
           </div>
         </div>
       </header>
