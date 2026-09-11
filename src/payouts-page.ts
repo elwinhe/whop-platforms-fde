@@ -181,6 +181,7 @@ export const payoutsPage = `<!doctype html>
       const portal = document.querySelector('#portal');
       let session;
       let loadAttempt = 0;
+      let refreshBalance;
 
       const txCard = document.querySelector('#transactions-card');
       const txStatusBody = document.querySelector('#transactions-status-body');
@@ -257,6 +258,7 @@ export const payoutsPage = `<!doctype html>
             note.textContent = '';
             try {
               await request('/api/transactions/' + encodeURIComponent(tx.resource_id) + '/refund', { method: 'POST' });
+              refreshBalance?.();
               await loadTransactions(request, attempt);
             } catch (error) {
               refund.disabled = false;
@@ -404,6 +406,7 @@ export const payoutsPage = `<!doctype html>
         try {
           session?.destroy();
           session = undefined;
+          refreshBalance = undefined;
           const profile = await request('/api/payout-context');
           tokenValidated = true;
           checkoutCard.classList.remove('hidden');
@@ -451,11 +454,21 @@ export const payoutsPage = `<!doctype html>
           });
           session.on('error', onError);
           session.on('tokenRefreshError', onError);
-          session.createElement('balance-element', { onReady: onReady('#balance') }).mount('#balance');
+          let balanceElement = session.createElement('balance-element', { onReady: onReady('#balance') });
+          balanceElement.mount('#balance');
           session.createElement('withdraw-button-element', { onReady: onReady('#withdraw') }).mount('#withdraw');
+          refreshBalance = () => {
+            if (attempt !== loadAttempt || !session) return;
+            balanceElement.unmount();
+            document.querySelector('#balance').replaceChildren();
+            document.querySelector('#balance-loading')?.classList.remove('hidden');
+            balanceElement = session.createElement('balance-element', { onReady: onReady('#balance') });
+            balanceElement.mount('#balance');
+          };
         } catch (error) {
           session?.destroy();
           session = undefined;
+          refreshBalance = undefined;
           payoutError = error instanceof Error ? error.message : 'Unable to load payouts.';
           updateStatus();
           elements.classList.add('hidden');
