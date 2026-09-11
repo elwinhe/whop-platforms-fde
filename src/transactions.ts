@@ -1,4 +1,5 @@
 import {
+  applicationFeeMinor,
   currencyMinorDigits,
   isObject,
   majorToMinor,
@@ -80,6 +81,20 @@ function moneyToMinor(value: unknown, fallbackDecimals: number): number | null {
   return majorToMinor(value, fallbackDecimals);
 }
 
+// Production payment payloads omit application_fee; gross minus net bundles the
+// platform fee with Whop's processing fee. Re-derive the platform fee from the
+// checkout fee policy, accepting it only when it fits inside the observed
+// deduction (the remainder is Whop's processing fee).
+function derivedFeeMinor(
+  grossMinor: number | null,
+  netMinor: number | null,
+): number | null {
+  if (grossMinor === null || netMinor === null) return null;
+  const deductedMinor = grossMinor - netMinor;
+  const feeMinor = applicationFeeMinor(grossMinor);
+  return feeMinor > 0 && feeMinor <= deductedMinor ? feeMinor : null;
+}
+
 function paymentTransaction(
   row: Record<string, unknown>,
   ledger: ReadonlySet<string>,
@@ -98,6 +113,7 @@ function paymentTransaction(
   const metadata = isObject(row.metadata) ? row.metadata : null;
   const status = typeof row.status === "string" ? row.status : "unknown";
   const grossMinor = moneyToMinor(row.total, decimals);
+  const netMinor = moneyToMinor(row.amount_after_fees, decimals);
   const refundedMinor = moneyToMinor(row.refunded_amount, decimals) ?? 0;
   return {
     source: "payment",
@@ -112,8 +128,10 @@ function paymentTransaction(
     currency,
     currency_decimals: decimals,
     gross_minor: grossMinor,
-    fee_minor: moneyToMinor(fee?.amount, decimals),
-    net_minor: moneyToMinor(row.amount_after_fees, decimals),
+    fee_minor:
+      moneyToMinor(fee?.amount, decimals) ??
+      (refundedMinor > 0 ? null : derivedFeeMinor(grossMinor, netMinor)),
+    net_minor: netMinor,
     status,
     settlement:
       refundedMinor > 0
