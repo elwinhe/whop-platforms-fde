@@ -3,7 +3,7 @@
 ### Loom video link: 
 https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
 
-Ledgerly is a sandbox reference for a marketplace built on Whop connected accounts. It includes authenticated seller onboarding, 8% direct-charge checkout, embedded and hosted payouts, durable Standard Webhooks ingestion, platform operations, and read-only reconciliation.
+Ledgerly is a reference implementation for a marketplace built on Whop connected accounts, runnable against Whop's sandbox or production API. It includes authenticated seller onboarding, 8% direct-charge checkout, embedded and hosted payouts, durable Standard Webhooks ingestion, platform operations, and read-only reconciliation.
 
 ## Quick start
 
@@ -17,7 +17,7 @@ npm run dev
 
 Open http://127.0.0.1:3000. Enter the token from one configured `LEDGERLY_SELLER_SESSIONS` entry; the browser uses it only as a Bearer credential to the local server. The Whop API key is never returned to the browser.
 
-Use sandbox credentials only. `LEDGERLY_PUBLIC_URL` must be an HTTPS tunnel/origin because Whop account-link return URLs do not accept localhost. The generic API client is locked to `https://sandbox-api.whop.com/api/v1/`, rejects redirects, and times out.
+`WHOP_ENV` selects the target: `sandbox` (default, `sandbox-api.whop.com`) or `production` (`api.whop.com`). The generic API client is locked to the selected base URL, rejects redirects, and times out. Use credentials that match the environment, and treat production runs as real money movement. `LEDGERLY_PUBLIC_URL` must be an HTTPS tunnel/origin because Whop account-link return URLs do not accept localhost.
 
 ## Configuration and scopes
 
@@ -51,13 +51,13 @@ Onboarding lists every child-account page and reuses one exact `metadata.externa
 
 Checkout accepts integer minor units and computes the fee with integer arithmetic (`2500 → 200`). It verifies the locally bound account still appears under the configured platform, records the order fingerprint before POST, sends an idempotency key, and retrieves the known checkout on exact retry. The connected account is bound in `plan.company_id`, and inline products use the order ID as a stable external identifier. An unresolved attempt stops instead of risking a second checkout. Whop validation errors are returned as `provider` errors; a URL is never fabricated.
 
-The inline-plan request follows Whop's current checkout schema and official Masterclass example. In this sandbox, an earlier assessment-shaped request produced a conflicting `company_id` validation error. That historical provider/schema blocker is not evidence of a checkout; validate the corrected request in an enabled sandbox rather than claiming success from the local implementation.
+The inline-plan request follows Whop's current checkout schema and official Masterclass example, binding the connected account via top-level `account_id`. Production ignores the nested `plan.company_id` shape and attributes the plan to the key's own company (sandbox accepted it, masking the drift); the corrected request is verified live in `docs/evidence.md`.
 
 ## Payouts
 
 The seller dashboard uses [Tabler](https://docs.tabler.io/ui/getting-started/installation), pinned to 1.5.1 with stylesheet integrity verification. Its responsive cards contain the Whop controls; the stylesheet requires access to jsDelivr. No Tabler JavaScript or frontend build is needed.
 
-The root page mounts Whop's official `BalanceElement` and `WithdrawButtonElement` in sandbox mode. Its token callback calls `POST /api/payout-token`, so the 10-minute token refreshes without exposing the platform key. Loading and provider errors are visible. `POST /api/payout-portal` creates a time-limited `payouts_portal` fallback.
+The root page mounts Whop's official `BalanceElement` and `WithdrawButtonElement` in the environment selected by `WHOP_ENV`. Its token callback calls `POST /api/payout-token`, so the 10-minute token refreshes without exposing the platform key. Loading and provider errors are visible. `POST /api/payout-portal` creates a time-limited `payouts_portal` fallback.
 
 A Transactions table replaces the raw withdrawal history. `GET /api/transactions` reuses the reconciliation reads — the seller's payments plus sent and received transfers — and merges them with the local webhook ledger, so each sale shows the gross amount, the 8% platform fee, the seller's net after Whop processing fees, and whether the local ledger recorded the event. Paid sales are marked as pending until Whop settles funds to the available balance; refunds surface on the same row. A successful refund also remounts the balance element, so the displayed balance refreshes from Whop immediately instead of holding the stale pre-refund snapshot until the next page load. The operator view exposes the same table per connected account at `GET /api/accounts/:companyId/transactions` (admin token required).
 
@@ -143,6 +143,6 @@ sequenceDiagram
 
 ## Evidence and limitations
 
-No payments, refunds, transfers, webhook writes, suspensions, API keys, or fee markups are executed by installing this repository. The only currently recorded live result is the already-completed US onboarding read in `docs/evidence.md`. Platform enablement is not confirmed, and the remaining IDs, screenshots, payloads, and money-flow proof must come from reviewed sandbox runs. Mocks or locally signed events prove local behavior only, never provider delivery.
+Installing this repository executes nothing against Whop — no payments, refunds, transfers, webhook writes, suspensions, API keys, or fee markups. All recorded live results are in `docs/evidence.md`: completed US onboarding, and the full money flow verified on production (a $25 direct charge with the 8% application fee, a funding transfer, a full refund, a fee-reversal transfer making the seller whole, and a parent-to-Brazil transfer). Sandbox-specific blockers — the broken deposit flow and settlement-locked balances — are documented there as well. Mocks or locally signed events prove local behavior only, never provider delivery.
 
 This reference has no production identity provider, distributed lock/database, secret manager, observability, backup policy, or public deployment. Do not publish private assessment exports, account links, session tokens, or raw evidence. Resolve the assessment's public-repository requirement with the repository owner before changing visibility.
