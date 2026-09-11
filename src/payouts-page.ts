@@ -221,6 +221,17 @@ export const payoutsPage = `<!doctype html>
           cell.textContent = formatMoney(amount, tx.currency_decimals, tx.currency);
           row.append(cell);
         }
+        if (tx.source === 'payment') {
+          const feeNote = document.createElement('div');
+          feeNote.className = 'text-secondary small';
+          feeNote.textContent = (tx.fee_source === 'estimated' ? 'Estimated 8% fee. ' : '')
+            + (tx.fee_refund_status === 'unverified'
+              ? 'Fee return unverified — Whop did not provide fee-refund evidence.'
+              : 'Fee returned: ' + formatMoney(tx.fee_refunded_minor, tx.currency_decimals, tx.currency)
+                + ' (' + tx.fee_refund_status.replaceAll('_', ' ') + ')');
+          if (tx.fee_id) feeNote.textContent += ' · ' + tx.fee_id;
+          row.children[3].append(feeNote);
+        }
         const statusCell = document.createElement('td');
         const badge = document.createElement('span');
         badge.className = 'badge ' + (
@@ -252,7 +263,7 @@ export const payoutsPage = `<!doctype html>
           refund.textContent = 'Refund';
           refund.addEventListener('click', async () => {
             const amount = formatMoney(tx.gross_minor, tx.currency_decimals, tx.currency);
-            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is not returned automatically.')) return;
+            if (!confirm('Refund ' + amount + ' to the buyer? This action does not transfer Ledgerly’s 8% fee back to the seller. Check the fee-return status separately.')) return;
             refund.disabled = true;
             refund.textContent = 'Refunding…';
             note.textContent = '';

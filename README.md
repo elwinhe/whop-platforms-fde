@@ -63,6 +63,8 @@ A Transactions table replaces the raw withdrawal history. `GET /api/transactions
 
 Configure a crypto-withdrawal markup (preview first):
 
+Refunding a buyer and returning Ledgerly's application fee are separate operations. Both transaction tables show Whop's `application_fee.amount_refunded` when supplied, including partial or zero returns, alongside the fee ID. Missing or inconsistent evidence displays **Fee return unverified**; an estimated 8% charge never proves reversal. A separate platform-to-seller compensation transfer must be reconciled independently and is not represented by this native fee-refund field. The refund button does not initiate that transfer. Refunds refresh transactions and the seller balance; no additional real payment is needed to inspect existing refund evidence.
+
 ```sh
 npm run operations -- markup crypto biz_SELLER 2.5
 npm run operations -- markup crypto biz_SELLER 2.5 --apply

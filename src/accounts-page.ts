@@ -237,6 +237,17 @@ export const accountsPage = `<!doctype html>
         for (const amount of [tx.gross_minor, tx.fee_minor, tx.net_minor]) {
           row.append(textCell(formatMoney(amount, tx.currency_decimals, tx.currency), 'text-end text-nowrap'));
         }
+        if (tx.source === 'payment') {
+          const feeNote = document.createElement('div');
+          feeNote.className = 'text-secondary small';
+          feeNote.textContent = (tx.fee_source === 'estimated' ? 'Estimated 8% fee. ' : '')
+            + (tx.fee_refund_status === 'unverified'
+              ? 'Fee return unverified — Whop did not provide fee-refund evidence.'
+              : 'Fee returned: ' + formatMoney(tx.fee_refunded_minor, tx.currency_decimals, tx.currency)
+                + ' (' + tx.fee_refund_status.replaceAll('_', ' ') + ')');
+          if (tx.fee_id) feeNote.textContent += ' · ' + tx.fee_id;
+          row.children[3].append(feeNote);
+        }
         const statusText = String(tx.status || 'unknown').replaceAll('_', ' ')
           + (tx.settlement === 'pending' ? ' · settlement pending' : tx.settlement ? ' · ' + tx.settlement.replaceAll('_', ' ') : '');
         row.append(textCell(statusText));
@@ -249,13 +260,13 @@ export const accountsPage = `<!doctype html>
           refund.textContent = 'Refund';
           refund.addEventListener('click', async () => {
             const amount = formatMoney(tx.gross_minor, tx.currency_decimals, tx.currency);
-            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is reversed with it.')) return;
+            if (!confirm('Refund ' + amount + ' to the buyer? This action does not transfer Ledgerly’s 8% fee back to the seller. Check the fee-return status separately.')) return;
             refund.disabled = true;
             refund.textContent = 'Refunding…';
             try {
               await request('/api/accounts/' + encodeURIComponent(account.company_id)
                 + '/transactions/' + encodeURIComponent(tx.resource_id) + '/refund', { method: 'POST' });
-              setStatus('Refund issued for ' + tx.resource_id + '. Reloading transactions…', 'success');
+              setStatus('Refund request accepted for ' + tx.resource_id + '. Fee return is separate; check the refreshed fee status.', 'success');
               await loadTransactions(account, refund);
             } catch (error) {
               refund.disabled = false;
