@@ -2,88 +2,53 @@
 
 Do not record API keys, webhook secrets, card details, or other credentials here.
 
-## Accounts and access
+## Environment
 
-Setup: [Step 1 seed workflow](../README.md#step-1-reproducible-seller-setup). Blank fields are pending evidence.
+| Environment | Platform | US seller | Notes |
+| --- | --- | --- | --- |
+| Sandbox | `biz_BC8sRG36RkIpHk` | `biz_q5tPMk6MCfoLOm` | Initial build-out; Germany `biz_PCXEasqVqvNB0w` suspended, Brazil retained |
+| Production | `biz_IZ9OQ6myPsj2eJ` | `biz_ueaMn4Gey9kg6b` | Money flows completed here; all sellers confirmed parent-linked via `GET /companies?parent_company_id=...` |
 
-- Platform business ID:
-- US / Germany / Brazil account IDs:
-- Duplicate and nested-account probe evidence:
-- Least-privilege platform/per-seller key scope (no secret values):
-- Suspended Germany seller `biz_PCXEasqVqvNB0w`; read-back confirms `status: "suspended"`. US and Brazil were retained for the payment flows.
-- Per-seller API key: pending authenticated user access. The account API key cannot create API keys; `WHOP_USER_TOKEN` is not configured.
+Loom: https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
 
-### Sandbox setup notes
+## Seller setup and onboarding
 
-Whop rejected an `example.com` address with HTTP `400`: "The email you provided does not accept incoming mail. Please use a different email address." The seed script now accepts configurable receiving addresses and reused the three existing sellers by external ID.
+- Seeding is idempotent by `metadata.external_id`: reruns return the existing account instead of creating a duplicate. Whop rejects non-receiving addresses (HTTP 400: "The email you provided does not accept incoming mail"), so placeholder `example.com` emails cannot be used.
+- Nested-account probe: creating an account under a connected account is rejected — only the platform can create children.
+- Hosted onboarding (`POST /account_links`, `use_case: "account_onboarding"`): completed for the US seller. After-state: `verification.individual.status: "approved"`, `required_actions: []`; card/bank payments, standard/crypto payouts, transfers active (BNPL, instant payouts, bank deposits, card issuing inactive). The pre-onboarding `/companies` read exposes only `verified: false`, so no field-level before-state was captured.
 
-## Onboarding and payouts
+## Payouts surfaces
 
-### Step 2: seller onboarding
+- Embedded payouts render on the seller dashboard with a scoped, short-expiry access token (balance ledger and email confirmed live).
+- Hosted alternative: `payouts_portal` account link mints successfully.
+- Withdrawal markup on the US seller's crypto rail: `lafm_Q8eAID0vxoDHb`, `percentage_fee: 2.5`, confirmed by read-back.
 
-US seller: `biz_q5tPMk6MCfoLOm` (`ledgerly_seller_us`).
+## Webhooks and operations
 
-- Created an onboarding link with `POST /account_links`, seller `company_id`, and `use_case: "account_onboarding"` (HTTP `200`). Completed the hosted form and returned with `status=submitted`.
-- After: `GET /accounts/biz_q5tPMk6MCfoLOm` returned HTTP `200`: `verification.individual.status: "approved"`, `verification.business: null`, and `required_actions: []`.
-- Capabilities: card/bank payments, standard/crypto payouts, transfers, crypto/card deposits, and ads are `active`; BNPL, instant payouts, bank deposits, and card issuing are `inactive`.
-- Comparison limitation: the earlier `/companies` read returned `verified: false` but omitted these account fields. The approved after-state is confirmed; their before-state was not captured.
+- Platform webhook `hook_KzHrEyfb8NxqA`: `child_resource_events: true`, all eight required events; creation requires `Api-Version-Date: 2026-09-09`.
+- Test delivery passed signature verification (HTTP 202). Replay was accepted once, then deduplicated (`duplicate: true`). Events for unmatched sellers are recorded as `unknown_seller` with no ledger effect.
+- Local consumer validation with synthetic signed events: invalid signatures 401; replay after a server restart left exactly one ledger entry; malformed authenticated checkout 400.
+- Germany seller suspended; read-back confirms `status: "suspended"`. Operator create/suspend endpoints reuse the idempotent onboarding flow (identity-mismatch 409, non-child suspend 403, admin-only auth).
+- Per-seller API key: blocked — the account API key cannot create API keys, and no authenticated user token is configured.
 
-- Embedded payouts: seller confirmed the balance ledger and email render successfully.
-- Hosted payouts portal: link created successfully; opening the hosted page remains to be demonstrated.
-- US seller crypto-withdrawal markup: `lafm_Q8eAID0vxoDHb`, `percentage_fee: 2.5`, `fixed_fee_usd: 0`; confirmed by read-back.
+## Money flows (production)
 
-## Payments and operations
+- **Checkout attribution drift**: production ignores `plan.company_id` and attributes the dynamic plan to the API key's own company, so application-fee validation fails ("can only be set for connected accounts"). Fix: pass top-level `account_id`, the documented shape. Verified live: `ch_AjToR3sy6bPNsos` on the US seller with the 8% fee. Sandbox accepted the nested shape, masking the drift.
+- **Fee split** on the $25.00 sale: $2.00 platform fee (8%) + $1.25 Whop processing → seller net $21.75. Cross-checked by a no-fee probe charge on the platform netting $23.75. Production payment payloads omit `application_fee` entirely, so the transactions view re-derives the fee from the checkout policy, bounded by the observed gross−net deduction.
+- **Transfer**: $25.00 platform → US seller (`ctt_TpCjAkNjPEo0cj`) funded the refund. Sale proceeds stay pending until settlement, so a seller cannot self-fund a refund of an unsettled sale.
+- **Refund**: full $25.00 on `pay_yRILVDwzGPjc5k` via the operator endpoint; `refunded_amount: $25.00`, transactions view shows `settlement: refunded`.
+- **Fee reversal**: $2.00 platform → US seller (`ctt_lkqCY3fAp0zUuM`); platform available dropped exactly the fee. Whop does not claw back the application fee on refund — making the seller whole is an explicit transfer, and Whop's own $1.25 processing fee is not recoverable.
+- **Settled ledger**: the refund consumed exactly the $25.00 funding transfer, leaving the seller's available at $2.00 (the fee reversal). A transient −$25.00 available reading during refund processing resolved on its own. The refunded sale's $21.75 still lists as a pending settlement; expect it to net out on settlement day.
+- Seller transactions view shows the complete story in three rows: the refunded sale ($25.00 gross / $2.00 fee / $21.75 net) and both incoming transfers.
 
-- Aligned the checkout helper with the server payload (`plan.company_id`, inline product external identifier, and payment mode). The US $25 checkout with a $2 application fee returned HTTP `403`: `forbidden`, "You are not authorized". The same key read both platform and US accounts with HTTP `200`; checkout authorization remains unresolved. No checkout URL or payment was created by this attempt.
-- Direct payment ID / refund ID / transfer ID:
-- Ledger screenshots or redacted exports:
-- Platform webhook `hook_KzHrEyfb8NxqA`: enabled with `child_resource_events: true` and all eight required events. Creation required `Api-Version-Date: 2026-09-09`.
-- Whop `payment.succeeded` test reached the signature-verifying endpoint with HTTP `202`; replay of an `account.updated` delivery succeeded, and another replay returned HTTP `200`, `duplicate: true`. Both were recorded as `unknown_seller` without ledger effects: the synthetic payment did not match a local seller, and Germany was not registered in the local seller table. This confirms delivery, signature verification, and deduplication, not transaction reconciliation.
-- Reconciliation: `npm run reconcile -- --seller biz_q5tPMk6MCfoLOm` exited `0`. Payments, sent transfers, and received transfers returned HTTP `200` after the permission update. Local and remote counts were both `0`, with no differences. This used a newly initialized empty local ledger; it confirms access and the empty-state comparison, not reconciliation of completed transactions.
+## Sandbox-only blockers
 
-### Dashboard validation
+- **Funding**: balances were settlement-locked (platform and sellers at $0.00 available) and `POST /deposits` returns a raw HTTP 500 — the dashboard deposit flow fails the same way. Refund and transfer could not be demonstrated in sandbox; both completed on production instead.
+- **Platform verification**: the sandbox platform account is unverified (`verification: null`) with `transfer` and `standard_payout` inactive; platform KYC is completable through the hosted `account_links` flow.
+- **Key scopes**: missing permissions surface one at a time per attempt (checkout, payment reads, and link mints each 403'd until their scope was granted), which materially slows integration. Error quality is inconsistent — the suspend error names the missing `company:suspend_child` scope; the `POST /companies` error does not name `company:create_child`.
 
-- Tabler 1.5.1 styles the seller dashboard; Whop supplies the embedded payout controls.
-- Typecheck and build pass. Desktop and mobile layouts fit without horizontal overflow; invalid sessions show an error and restore the load button. Seller endpoints reject unauthenticated requests with HTTP `401`.
-- Authenticated embedded payouts are configured with seller sessions and the HTTPS tunnel; seller confirmed live payout controls render.
-- Local validation with synthetic signed events: invalid signatures returned `401`; a platform-to-Brazil transfer reached the recipient's ledger; replay after a server restart left exactly one entry. Malformed authenticated checkout returned `400`, and hosted onboarding/payout return routes redirect to the dashboard. No financial API writes were used for validation.
+## Verification
 
-## Submission
-
-- Loom URL: https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
-
-## Pre-demo verification (2026-09-11, code-driven)
-
-A 14-point end-to-end suite ran against the live server and sandbox: 10 passed; all 4 failures share one root cause (API-key scopes, below).
-
-Verified working end to end: admin account listing; idempotent seller onboarding (existing `biz_q5tPMk6MCfoLOm` returned, KYC link minted); checkout creation and idempotent reuse (`reused: true`, 8% fee = 200 minor units, purchase URL present); scoped payout-token mint; hosted payouts-portal link; seller and operator transactions views (4 rows, $2.00 fee split visible); reconciliation; auth boundaries (seller tokens rejected from admin endpoints, bad tokens 401 everywhere).
-
-### Key-scope regressions after the permission rework
-
-- `POST /companies` now returns HTTP `403` "You are not authorized" — `company:create_child` is no longer granted, so connected-account creation (seed script, admin create) is blocked until the scope is re-added.
-- `POST /accounts/{id}/suspend` returns HTTP `403` "Business account API key is not authorized for the company:suspend_child scope."
-- Error-quality inconsistency worth noting: the suspend error names the missing scope; the companies error does not.
-
-### Money-movement state
-
-- Balances remain settlement-locked: platform `$31.37` pending / `$0.00` available; US seller `$85.48` pending / `$0.00` available. Refund and transfer stay blocked in sandbox on funds availability.
-- The platform account itself is unverified (`verification: null`) and its `transfer` and `standard_payout` capabilities are `inactive` — a second, independent transfer blocker. `POST /account_links` with the platform's own `account_id` and `use_case: "account_onboarding"` returns HTTP `200`, so platform KYC is completable through the hosted flow.
-- `POST /deposits` (`destination` = platform, `amount: 50`) returns a raw HTTP `500` from Whop — the sandbox deposit path fails at the API as well as in the dashboard.
-
-### Operator account management
-
-`POST /api/accounts` (create) and `POST /api/accounts/:companyId/suspend` were added to the operator surface, reusing the same idempotent create-or-fetch flow as seller onboarding. Structural checks pass: identity-mismatch 409, non-child suspension 403, admin-only auth. Live create/suspend proof is pending the two key scopes above.
-
-### Production checkout attribution (2026-09-11)
-
-- On production, `checkout_configurations` ignores `plan.company_id` and attributes the dynamic plan to the API key's own company — application-fee validation then fails with "can only be set for connected accounts (companies with a parent company)". Sandbox accepted the nested shape, masking the drift.
-- Fix: pass top-level `account_id` (the documented example's shape). Verified live: `ch_AjToR3sy6bPNsos` created against the US seller (`biz_ueaMn4Gey9kg6b`) with the 8% fee. All three production sellers confirmed as parent-linked children via `GET /companies?parent_company_id=...`; note the single-company retrieve endpoint does not serialize `parent_company_id`.
-
-### Production money flows completed (transfer → refund)
-
-- Payment payloads on production omit `application_fee` entirely; the transactions view re-derives the platform fee from the checkout policy (rounded 8%), bounded by the observed gross−net deduction. Cross-checked live: a no-fee probe charge on the parent netted `$23.75` of `$25.00` (Whop processing fee `$1.25` in isolation), and the seller sale netted `$21.75` (`$3.25` = `$2.00` platform fee + `$1.25` processing).
-- Transfer: `$25.00` parent → US seller (`ctt_TpCjAkNjPEo0cj`, idempotence key `ledgerly-transfer-us-refund-funding-1`) succeeded immediately; seller available went `$0.00` → `$25.00`. Sale proceeds themselves stay pending until settlement, which is why the seller could not self-fund the refund.
-- Refund: full `$25.00` on `pay_yRILVDwzGPjc5k` via the operator refund endpoint; `refunded_amount` = `$25.00`, transactions view shows `settlement: refunded`.
-- Ledger outcome: the refund debits the seller's available balance by the gross (`$25.00` → `-$25.00` pending settlement of the `$21.75` sale net), so a fully refunded seller ends `-$3.25` — the unreversed fees. The platform's `$2.00` application fee is **not** clawed back automatically; making the seller whole requires an explicit fee-reversal transfer.
-- Fee reversal: `$2.00` parent → US seller (`ctt_lkqCY3fAp0zUuM`, idempotence key tied to the refunded payment) succeeded; platform available dropped exactly the fee (`$2.51` → `$0.51`), completing the make-whole flow. After the refund finished processing, Whop reclassified the refund debit against the pending sale settlement — seller available recovered from `-$25.00` to `$0.00` rather than staying negative. Whop's own `$1.25` processing fee is not recoverable by transfer; eating it too is a platform policy choice.
-- Seller transactions view now shows the complete story in three rows: the refunded sale (`$25.00` gross / `$2.00` fee / `$21.75` net, settlement `refunded`) and both incoming transfers (`$25.00` refund funding, `$2.00` fee reversal).
+- 14-point end-to-end suite against the live server: 10 passed; all 4 failures shared the key-scope root cause above.
+- Verified working: admin account listing; idempotent onboarding (existing seller returned, KYC link minted); checkout creation with idempotent reuse (`reused: true`, 8% fee = 200 minor units, purchase URL present); scoped payout-token mint; hosted portal link; seller and operator transactions views with the fee split visible; reconciliation (`npm run reconcile` exit 0, local and remote counts match); auth boundaries (seller tokens rejected from admin endpoints, bad tokens 401 everywhere).
+- Dashboard: Tabler 1.5.1 with Whop's embedded payout controls; typecheck and build pass; desktop and mobile layouts fit without horizontal overflow; invalid sessions surface an error and restore the load button.

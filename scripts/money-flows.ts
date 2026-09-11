@@ -16,6 +16,7 @@ function requireEnvId(name: string): string {
 
 const PLATFORM = requireEnvId("WHOP_PLATFORM_COMPANY_ID");
 const US_SELLER = requireEnvId("LEDGERLY_US_SELLER_ID");
+
 const help = `Step 3 — amounts in USD; accounts come from WHOP_ENV + .env IDs
 
 npm run money -- checkout direct ORDER [--apply]
@@ -31,18 +32,31 @@ Use a new ORDER only for a genuinely new purchase/transfer.
 Inspect saves all ledger pages and optionally the payment/transfer details.
 Top up Ledgerly in the sandbox dashboard if available funds are insufficient.`;
 
+// Evidence redaction: only these fields survive into saved responses.
 const safeFields = new Set([
+  // pagination
   "data",
   "page_info",
   "end_cursor",
   "has_next_page",
   "has_previous_page",
   "start_cursor",
+
+  // identity and linkage
   "id",
   "object",
   "account_id",
   "origin_id",
   "destination_id",
+  "origin",
+  "destination",
+  "origin_ledger_account_id",
+  "destination_ledger_account_id",
+  "account",
+  "resource",
+  "source",
+
+  // money amounts and currency
   "status",
   "amount",
   "value",
@@ -64,16 +78,13 @@ const safeFields = new Set([
   "settlement_amount",
   "settlement_currency",
   "tax_amount",
+
+  // ledger-line classification
   "type",
   "line_type",
   "category",
-  "resource",
-  "source",
-  "origin",
-  "destination",
-  "origin_ledger_account_id",
-  "destination_ledger_account_id",
-  "account",
+
+  // account state and capabilities
   "verification",
   "individual",
   "business",
@@ -112,92 +123,157 @@ function requireId(value: string | undefined, prefix: string): string {
   return value;
 }
 
-async function main() {
-  const raw = process.argv.slice(2);
-  if (!raw.length || raw.includes("--help")) return console.log(help);
-  const apply = raw.includes("--apply");
-  const args = raw.filter((arg) => arg !== "--apply");
+type WriteKind = "checkout" | "transfer" | "refund";
+
+const writeResources: Record<
+  WriteKind,
+  { idPrefix: string; resource: string }
+> = {
+  checkout: { idPrefix: "ch", resource: "checkout_configurations" },
+  transfer: { idPrefix: "tr", resource: "transfers" },
+  refund: { idPrefix: "pay", resource: "payments" },
+};
+
+type PlannedOperation = {
+  [K in WriteKind]: {
+    kind: K;
+    body: Operations[K]["request"];
+    orderKey: string;
+  };
+}[WriteKind];
+
+type Plan = {
+  command: string;
+  target: string;
+  order?: string;
+  path: string;
+  key?: string;
+  operation?: PlannedOperation;
+};
+
+function planCommand(args: string[], apply: boolean): Plan {
   const [command, target, order] = args;
-  if (
-    raw.filter((arg) => arg === "--apply").length > 1 ||
-    args.some((arg) => arg.startsWith("--"))
-  ) {
-    throw new Error(help);
-  }
-  let path: string;
-  let operation:
-    | { kind: "checkout"; body: Operations["checkout"]["request"] }
-    | { kind: "refund"; body: Operations["refund"]["request"] }
-    | { kind: "transfer"; body: Operations["transfer"]["request"] }
-    | undefined;
-  let key: string | undefined;
 
   if (
     command === "checkout" &&
     args.length === 3 &&
     ["direct", "platform"].includes(target)
   ) {
-    path = "checkout_configurations";
-    operation = {
-      kind: "checkout",
-      body: {
-        mode: "payment",
-        account_id: target === "direct" ? US_SELLER : PLATFORM,
-        plan: {
-          product: {
-            title: "Acme Preset Pack",
-            external_identifier: `ledgerly-${order}`,
+    return {
+      command,
+      target,
+      order,
+      path: "checkout_configurations",
+      key: `ledgerly-checkout-${target}-${order}`,
+      operation: {
+        kind: "checkout",
+        orderKey: `checkout-${target}-${order}`,
+        body: {
+          mode: "payment",
+          account_id: target === "direct" ? US_SELLER : PLATFORM,
+          plan: {
+            product: {
+              title: "Acme Preset Pack",
+              external_identifier: `ledgerly-${order}`,
+            },
+            visibility: "hidden",
+            release_method: "buy_now",
+            plan_type: "one_time",
+            initial_price: 25,
+            currency: "usd",
+            ...(target === "direct" ? { application_fee_amount: 2 } : {}),
           },
-          visibility: "hidden",
-          release_method: "buy_now",
-          plan_type: "one_time",
-          initial_price: 25,
-          currency: "usd",
-          ...(target === "direct" ? { application_fee_amount: 2 } : {}),
+          metadata: { order_id: order },
+          redirect_url: "https://example.com/return",
         },
-        metadata: { order_id: order },
-        redirect_url: "https://example.com/return",
       },
     };
-    key = `ledgerly-checkout-${target}-${order}`;
-  } else if (command === "refund" && args.length === 2) {
-    path = `payments/${requireId(target, "pay")}/refund`;
-    operation = { kind: "refund", body: {} };
-    key = `ledgerly-full-refund-${target}`;
-  } else if (command === "transfer" && args.length === 3) {
+  }
+
+  if (command === "refund" && args.length === 2) {
+    return {
+      command,
+      target,
+      order,
+      path: `payments/${requireId(target, "pay")}/refund`,
+      key: `ledgerly-full-refund-${target}`,
+      operation: {
+        kind: "refund",
+        orderKey: `refund-${target}`,
+        body: {},
+      },
+    };
+  }
+
+  if (command === "transfer" && args.length === 3) {
     requireId(target, "biz");
     if (target === PLATFORM || target === US_SELLER)
       throw new Error("Supply the Brazilian seller ID");
-    path = "transfers";
-    key = `ledgerly-transfer-${target}-${order}`;
-    operation = {
-      kind: "transfer",
-      body: {
-        origin_id: PLATFORM,
-        destination_id: target,
-        amount: 23,
-        currency: "usd",
-        idempotence_key: key,
-        metadata: { order_id: order },
+    const key = `ledgerly-transfer-${target}-${order}`;
+    return {
+      command,
+      target,
+      order,
+      path: "transfers",
+      key,
+      operation: {
+        kind: "transfer",
+        orderKey: `transfer-${order}`,
+        body: {
+          origin_id: PLATFORM,
+          destination_id: target,
+          amount: 23,
+          currency: "usd",
+          idempotence_key: key,
+          metadata: { order_id: order },
+        },
       },
     };
-  } else if (
+  }
+
+  if (
     command === "inspect" &&
     (args.length === 2 || args.length === 3) &&
     !apply
   ) {
-    path = `accounts/${requireId(target, "biz")}`;
     if (order && !/^(pay|tr)_[A-Za-z0-9]+$/.test(order))
       throw new Error("Expected a pay_ or tr_ ID");
-  } else {
+    return {
+      command,
+      target,
+      order,
+      path: `accounts/${requireId(target, "biz")}`,
+    };
+  }
+
+  throw new Error(help);
+}
+
+async function main() {
+  const raw = process.argv.slice(2);
+  if (!raw.length || raw.includes("--help")) return console.log(help);
+
+  const apply = raw.includes("--apply");
+  const args = raw.filter((arg) => arg !== "--apply");
+  if (
+    raw.filter((arg) => arg === "--apply").length > 1 ||
+    args.some((arg) => arg.startsWith("--"))
+  ) {
     throw new Error(help);
   }
+
+  const { command, target, order, path, key, operation } = planCommand(
+    args,
+    apply,
+  );
+
   if (key && (!/^[A-Za-z0-9_-]+$/.test(key) || key.length > 200)) {
     throw new Error(
       "Use a short order reference containing letters, numbers, underscores or hyphens",
     );
   }
-  if (operation && !apply)
+
+  if (operation && !apply) {
     return console.log(
       JSON.stringify(
         { method: "POST", path, body: operation.body, idempotency_key: key },
@@ -205,6 +281,7 @@ async function main() {
         2,
       ),
     );
+  }
 
   const client = createWhopSandboxClient();
   const file = resolve(
@@ -228,6 +305,7 @@ async function main() {
       },
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
+
     const data: unknown = await response.json();
     evidence.push({
       path: endpoint,
@@ -239,6 +317,7 @@ async function main() {
     await writeFile(file, JSON.stringify(evidence, null, 2) + "\n", {
       mode: 0o600,
     });
+
     if (!response.ok)
       throw new Error(
         `Whop HTTP ${response.status}; check key scopes and sandbox dashboard. No automatic retry.`,
@@ -254,37 +333,23 @@ async function main() {
     return data as Operations[K]["response"];
   }
 
-  async function write<K extends "checkout" | "transfer" | "refund">(
-    kind: K,
-    payload: Operations[K]["request"],
+  async function write<K extends WriteKind>(
+    planned: Extract<PlannedOperation, { kind: K }>,
   ): Promise<Operations[K]["response"]> {
-    const orderKey =
-      kind === "checkout"
-        ? `checkout-${target}-${order}`
-        : kind === "transfer"
-          ? `transfer-${order}`
-          : `refund-${target}`;
+    const { idPrefix, resource } = writeResources[planned.kind];
     return runOperation({
-      orderKey,
-      fingerprint: JSON.stringify({ path, payload, key }),
-      create: () => request(kind, path, payload),
+      orderKey: planned.orderKey,
+      fingerprint: JSON.stringify({ path, payload: planned.body, key }),
+      create: () => request(planned.kind, path, planned.body),
       retrieve: (id) => {
-        const prefix =
-          kind === "checkout" ? "ch" : kind === "transfer" ? "tr" : "pay";
-        requireId(id, prefix);
-        const resource =
-          kind === "checkout"
-            ? "checkout_configurations"
-            : kind === "transfer"
-              ? "transfers"
-              : "payments";
-        return request(kind, `${resource}/${id}`);
+        requireId(id, idPrefix);
+        return request(planned.kind, `${resource}/${id}`);
       },
     });
   }
 
   if (operation?.kind === "checkout") {
-    const result = await write("checkout", operation.body);
+    const result = await write(operation);
     console.log(JSON.stringify(redact(result), null, 2));
     if (!result.purchase_url)
       throw new Error(
@@ -292,22 +357,21 @@ async function main() {
       );
     console.log(`Pay with a sandbox card: ${result.purchase_url}`);
   } else if (operation) {
-    const result =
-      operation.kind === "transfer"
-        ? await write("transfer", operation.body)
-        : await write("refund", operation.body);
+    const result = await write(operation);
     console.log(JSON.stringify(redact(result), null, 2));
   }
 
   if (command === "inspect") {
     const account = await request("account", path);
     console.log(JSON.stringify(redact(account), null, 2));
+
     if (order) {
       const detail = order.startsWith("pay_")
         ? await request("payment", `payments/${order}`)
         : await request("transfer", `transfers/${order}`);
       console.log(JSON.stringify(redact(detail), null, 2));
     }
+
     let cursor = "";
     const seen = new Set<string>();
     do {
