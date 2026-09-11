@@ -73,3 +73,8 @@ Verified working end to end: admin account listing; idempotent seller onboarding
 ### Operator account management
 
 `POST /api/accounts` (create) and `POST /api/accounts/:companyId/suspend` were added to the operator surface, reusing the same idempotent create-or-fetch flow as seller onboarding. Structural checks pass: identity-mismatch 409, non-child suspension 403, admin-only auth. Live create/suspend proof is pending the two key scopes above.
+
+### Production checkout attribution (2026-09-11)
+
+- On production, `checkout_configurations` ignores `plan.company_id` and attributes the dynamic plan to the API key's own company — application-fee validation then fails with "can only be set for connected accounts (companies with a parent company)". Sandbox accepted the nested shape, masking the drift.
+- Fix: pass top-level `account_id` (the documented example's shape). Verified live: `ch_AjToR3sy6bPNsos` created against the US seller (`biz_ueaMn4Gey9kg6b`) with the 8% fee. All three production sellers confirmed as parent-linked children via `GET /companies?parent_company_id=...`; note the single-company retrieve endpoint does not serialize `parent_company_id`.
