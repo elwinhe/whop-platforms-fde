@@ -71,20 +71,34 @@ function safeDecimals(currency: string | null): number {
   }
 }
 
+function moneyToMinor(value: unknown, fallbackDecimals: number): number | null {
+  if (isObject(value)) {
+    const decimals =
+      typeof value.decimals === "number" ? value.decimals : fallbackDecimals;
+    return majorToMinor(value.amount, decimals);
+  }
+  return majorToMinor(value, fallbackDecimals);
+}
+
 function paymentTransaction(
   row: Record<string, unknown>,
   ledger: ReadonlySet<string>,
 ): TransactionRow | null {
   if (typeof row.id !== "string") return null;
+  const total = isObject(row.total) ? row.total : null;
   const currency =
-    typeof row.currency === "string" ? row.currency.toLowerCase() : null;
+    typeof row.currency === "string"
+      ? row.currency.toLowerCase()
+      : typeof total?.currency === "string"
+        ? total.currency.toLowerCase()
+        : null;
   const decimals = safeDecimals(currency);
   const fee = isObject(row.application_fee) ? row.application_fee : null;
   const product = isObject(row.product) ? row.product : null;
   const metadata = isObject(row.metadata) ? row.metadata : null;
   const status = typeof row.status === "string" ? row.status : "unknown";
-  const grossMinor = majorToMinor(row.total, decimals);
-  const refundedMinor = majorToMinor(row.refunded_amount, decimals) ?? 0;
+  const grossMinor = moneyToMinor(row.total, decimals);
+  const refundedMinor = moneyToMinor(row.refunded_amount, decimals) ?? 0;
   return {
     source: "payment",
     resource_id: row.id,
@@ -98,8 +112,8 @@ function paymentTransaction(
     currency,
     currency_decimals: decimals,
     gross_minor: grossMinor,
-    fee_minor: majorToMinor(fee?.amount, decimals),
-    net_minor: majorToMinor(row.amount_after_fees, decimals),
+    fee_minor: moneyToMinor(fee?.amount, decimals),
+    net_minor: moneyToMinor(row.amount_after_fees, decimals),
     status,
     settlement:
       refundedMinor > 0
