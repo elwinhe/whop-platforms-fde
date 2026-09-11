@@ -6,9 +6,17 @@ import type { ActivityQuery, Operations } from "./money-contracts.js";
 import { runOperation } from "./money-operation.js";
 import { safeProviderError } from "../src/domain.js";
 
-const PLATFORM = "biz_BC8sRG36RkIpHk";
-const US_SELLER = "biz_q5tPMk6MCfoLOm";
-const help = `Step 3 — sandbox only, amounts in USD
+function requireEnvId(name: string): string {
+  const value = (process.env[name] ?? "").trim();
+  if (!/^biz_[A-Za-z0-9]+$/.test(value)) {
+    throw new Error(`${name} must be set to a biz_ ID in .env`);
+  }
+  return value;
+}
+
+const PLATFORM = requireEnvId("WHOP_PLATFORM_COMPANY_ID");
+const US_SELLER = requireEnvId("LEDGERLY_US_SELLER_ID");
+const help = `Step 3 — amounts in USD; accounts come from WHOP_ENV + .env IDs
 
 npm run money -- checkout direct ORDER [--apply]
 npm run money -- checkout platform ORDER [--apply]
@@ -134,8 +142,8 @@ async function main() {
       kind: "checkout",
       body: {
         mode: "payment",
+        account_id: target === "direct" ? US_SELLER : PLATFORM,
         plan: {
-          company_id: target === "direct" ? US_SELLER : PLATFORM,
           product: {
             title: "Acme Preset Pack",
             external_identifier: `ledgerly-${order}`,

@@ -807,10 +807,10 @@ app.post("/api/checkout", async (c) => {
     await assertOwnedCompany(seller.company_id);
     const request = {
       mode: "payment",
+      account_id: seller.company_id,
       redirect_url: publicUrl(`orders/${body.order_id}/complete`),
       metadata: { order_id: body.order_id },
       plan: {
-        company_id: seller.company_id,
         product: {
           external_identifier: `ledgerly-${body.order_id}`,
           title: body.title.trim(),
