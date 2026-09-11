@@ -19,11 +19,15 @@ import {
   majorToMinor,
   minorToMajor,
   ORDER_ID,
+  PAYMENT_ID,
   safeProviderError,
 } from "./domain.js";
 import { payoutsPage } from "./payouts-page.js";
 import { LedgerStore } from "./store.js";
-import { loadCompanyTransactions } from "./transactions.js";
+import {
+  findCompanyPayment,
+  loadCompanyTransactions,
+} from "./transactions.js";
 import { createWhopSandboxClient } from "./whop.js";
 
 const app = new Hono();
@@ -622,6 +626,101 @@ app.get("/api/transactions", async (c) => {
       502,
     );
   }
+});
+
+async function refundCompanyPayment(
+  c: Context,
+  companyId: string,
+): Promise<Response> {
+  const paymentId = c.req.param("paymentId");
+  if (typeof paymentId !== "string" || !PAYMENT_ID.test(paymentId))
+    return c.json({ error: "invalid_payment_id" }, 400);
+  try {
+    const payment = await findCompanyPayment(companyId, paymentId);
+    if (!payment) return c.json({ error: "payment_not_found" }, 404);
+    if (payment.settlement === "refunded")
+      return c.json(
+        { error: "already_refunded", message: "This payment is already fully refunded." },
+        409,
+      );
+    if (payment.status !== "paid")
+      return c.json(
+        {
+          error: "payment_not_refundable",
+          message: `Only paid payments can be refunded (status: ${payment.status}).`,
+        },
+        409,
+      );
+    const result = await createWhopSandboxClient().json(
+      `payments/${paymentId}/refund`,
+      {
+        ...postJson({}),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": `ledgerly-full-refund-${paymentId}`,
+        },
+      },
+    );
+    if (!result.response.ok || !isObject(result.data)) {
+      const provider = safeProviderError(result.data);
+      return c.json(
+        {
+          error: "whop_error",
+          provider,
+          message:
+            isObject(provider) && typeof provider.message === "string"
+              ? provider.message
+              : "Whop rejected the refund",
+        },
+        result.response.status >= 400 && result.response.status < 500
+          ? (result.response.status as 400)
+          : 502,
+      );
+    }
+    return c.json({
+      company_id: companyId,
+      payment_id: paymentId,
+      status:
+        typeof result.data.status === "string" ? result.data.status : null,
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: "refund_failed",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to refund the payment",
+      },
+      502,
+    );
+  }
+}
+
+app.post(
+  "/api/accounts/:companyId/transactions/:paymentId/refund",
+  async (c) => {
+    const authError = adminAuth(c);
+    if (authError) return authError;
+    const companyId = c.req.param("companyId");
+    if (typeof companyId !== "string" || !COMPANY_ID.test(companyId))
+      return c.json({ error: "invalid_company_id" }, 400);
+    if (
+      !(await listPlatformChildren().catch(() => [])).some(
+        (candidate) => candidate.id === companyId,
+      )
+    )
+      return c.json({ error: "account_not_connected_to_platform" }, 403);
+    return refundCompanyPayment(c, companyId);
+  },
+);
+
+app.post("/api/transactions/:paymentId/refund", async (c) => {
+  const auth = sellerAuth(c);
+  if (auth instanceof Response) return auth;
+  const seller = store.sellerByExternalId(auth.externalId);
+  if (!seller) return c.json({ error: "seller_not_onboarded" }, 409);
+  return refundCompanyPayment(c, seller.company_id);
 });
 
 app.post("/api/onboarding", async (c) => {

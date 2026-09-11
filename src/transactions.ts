@@ -180,6 +180,17 @@ function ledgerOnlyTransaction(row: LedgerRow): TransactionRow {
   };
 }
 
+export async function findCompanyPayment(
+  companyId: string,
+  paymentId: string,
+): Promise<TransactionRow | null> {
+  const rows = await listPages(
+    `payments?account_id=${encodeURIComponent(companyId)}`,
+  );
+  const match = rows.find((row) => row.id === paymentId);
+  return match ? paymentTransaction(match, new Set()) : null;
+}
+
 export async function loadCompanyTransactions(
   store: LedgerStore,
   companyId: string,

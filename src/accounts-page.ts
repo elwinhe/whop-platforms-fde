@@ -124,7 +124,7 @@ export const accountsPage = `<!doctype html>
                       <th class="text-end">Platform fee</th>
                       <th class="text-end">Net to seller</th>
                       <th>Status</th>
-                      <th>Source</th>
+                      <th class="text-end">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="transactions-rows"></tbody>
@@ -210,12 +210,6 @@ export const accountsPage = `<!doctype html>
       const txEmpty = document.querySelector('#transactions-empty');
       const txWrap = document.querySelector('#transactions-wrap');
       const txRows = document.querySelector('#transactions-rows');
-      const SOURCE_LABELS = {
-        payment: 'Payment',
-        transfer_in: 'Transfer in',
-        transfer_out: 'Transfer out',
-        ledger_only: 'Webhook ledger',
-      };
 
       function formatMoney(minor, decimals, currency) {
         if (typeof minor !== 'number') return '—';
@@ -227,7 +221,7 @@ export const accountsPage = `<!doctype html>
         }
       }
 
-      function renderTransactionRow(tx) {
+      function renderTransactionRow(tx, account) {
         const row = document.createElement('tr');
         const date = textCell(tx.occurred_at ? new Date(tx.occurred_at).toLocaleString() : '—', 'text-nowrap');
         row.append(date);
@@ -236,7 +230,8 @@ export const accountsPage = `<!doctype html>
         title.textContent = tx.description || 'Transaction';
         const ref = document.createElement('div');
         ref.className = 'text-secondary account-id';
-        ref.textContent = tx.order_id ? 'Order ' + tx.order_id : tx.resource_id;
+        ref.textContent = (tx.order_id ? 'Order ' + tx.order_id : tx.resource_id)
+          + (tx.ledger_recorded ? ' · in webhook ledger' : '');
         description.append(title, ref);
         row.append(description);
         for (const amount of [tx.gross_minor, tx.fee_minor, tx.net_minor]) {
@@ -245,7 +240,35 @@ export const accountsPage = `<!doctype html>
         const statusText = String(tx.status || 'unknown').replaceAll('_', ' ')
           + (tx.settlement === 'pending' ? ' · settlement pending' : tx.settlement ? ' · ' + tx.settlement.replaceAll('_', ' ') : '');
         row.append(textCell(statusText));
-        row.append(textCell((SOURCE_LABELS[tx.source] ?? tx.source) + (tx.ledger_recorded ? ' · in webhook ledger' : '')));
+        const actions = document.createElement('td');
+        actions.className = 'text-end';
+        if (tx.source === 'payment' && tx.status === 'paid' && tx.settlement !== 'refunded') {
+          const refund = document.createElement('button');
+          refund.type = 'button';
+          refund.className = 'btn btn-sm btn-outline-danger';
+          refund.textContent = 'Refund';
+          refund.addEventListener('click', async () => {
+            const amount = formatMoney(tx.gross_minor, tx.currency_decimals, tx.currency);
+            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is reversed with it.')) return;
+            refund.disabled = true;
+            refund.textContent = 'Refunding…';
+            try {
+              await request('/api/accounts/' + encodeURIComponent(account.company_id)
+                + '/transactions/' + encodeURIComponent(tx.resource_id) + '/refund', { method: 'POST' });
+              setStatus('Refund issued for ' + tx.resource_id + '. Reloading transactions…', 'success');
+              await loadTransactions(account, refund);
+            } catch (error) {
+              refund.disabled = false;
+              refund.textContent = 'Refund';
+              setStatus(error instanceof Error ? error.message : 'Refund failed.', 'error');
+            }
+          });
+          actions.append(refund);
+        } else {
+          actions.className = 'text-end text-secondary';
+          actions.textContent = '—';
+        }
+        row.append(actions);
         txRows.append(row);
       }
 
@@ -260,7 +283,7 @@ export const accountsPage = `<!doctype html>
           txSubtitle.textContent = (account.external_id ?? account.company_id) + ' · ' + account.company_id;
           txEmpty.classList.toggle('hidden', list.length > 0);
           txWrap.classList.toggle('hidden', list.length === 0);
-          for (const tx of list) renderTransactionRow(tx);
+          for (const tx of list) renderTransactionRow(tx, account);
           txCard.classList.remove('hidden');
           setStatus(list.length
             ? list.length + (list.length === 1 ? ' transaction' : ' transactions') + ' loaded from Whop and the local webhook ledger.'

@@ -156,7 +156,7 @@ export const payoutsPage = `<!doctype html>
                       <th class="text-end">Platform fee</th>
                       <th class="text-end">Net to seller</th>
                       <th>Status</th>
-                      <th>Source</th>
+                      <th class="text-end">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="transactions-rows"></tbody>
@@ -188,12 +188,6 @@ export const payoutsPage = `<!doctype html>
       const txWrap = document.querySelector('#transactions-table-wrap');
       const txRows = document.querySelector('#transactions-rows');
       const txCount = document.querySelector('#transactions-count');
-      const SOURCE_LABELS = {
-        payment: 'Payment',
-        transfer_in: 'Transfer in',
-        transfer_out: 'Transfer out',
-        ledger_only: 'Webhook ledger',
-      };
 
       function formatMoney(minor, decimals, currency) {
         if (typeof minor !== 'number') return '—';
@@ -205,7 +199,7 @@ export const payoutsPage = `<!doctype html>
         }
       }
 
-      function renderTransaction(tx) {
+      function renderTransaction(tx, request, attempt) {
         const row = document.createElement('tr');
         const date = document.createElement('td');
         date.className = 'text-nowrap';
@@ -216,7 +210,8 @@ export const payoutsPage = `<!doctype html>
         title.textContent = tx.description || 'Transaction';
         const ref = document.createElement('div');
         ref.className = 'text-secondary small';
-        ref.textContent = tx.order_id ? 'Order ' + tx.order_id : tx.resource_id;
+        ref.textContent = (tx.order_id ? 'Order ' + tx.order_id : tx.resource_id)
+          + (tx.ledger_recorded ? ' · in webhook ledger' : '');
         description.append(title, ref);
         row.append(description);
         for (const amount of [tx.gross_minor, tx.fee_minor, tx.net_minor]) {
@@ -245,17 +240,36 @@ export const payoutsPage = `<!doctype html>
           statusCell.append(note);
         }
         row.append(statusCell);
-        const source = document.createElement('td');
-        const sourceLabel = document.createElement('div');
-        sourceLabel.textContent = SOURCE_LABELS[tx.source] ?? tx.source;
-        source.append(sourceLabel);
-        if (tx.ledger_recorded) {
-          const mark = document.createElement('div');
-          mark.className = 'text-secondary small';
-          mark.textContent = 'in webhook ledger';
-          source.append(mark);
+        const actions = document.createElement('td');
+        actions.className = 'text-end';
+        if (tx.source === 'payment' && tx.status === 'paid' && tx.settlement !== 'refunded') {
+          const note = document.createElement('div');
+          note.className = 'text-danger small mt-1';
+          const refund = document.createElement('button');
+          refund.type = 'button';
+          refund.className = 'btn btn-sm btn-outline-danger';
+          refund.textContent = 'Refund';
+          refund.addEventListener('click', async () => {
+            const amount = formatMoney(tx.gross_minor, tx.currency_decimals, tx.currency);
+            if (!confirm('Refund ' + amount + ' to the buyer? The platform fee is reversed with it.')) return;
+            refund.disabled = true;
+            refund.textContent = 'Refunding…';
+            note.textContent = '';
+            try {
+              await request('/api/transactions/' + encodeURIComponent(tx.resource_id) + '/refund', { method: 'POST' });
+              await loadTransactions(request, attempt);
+            } catch (error) {
+              refund.disabled = false;
+              refund.textContent = 'Refund';
+              note.textContent = error instanceof Error ? error.message : 'Refund failed.';
+            }
+          });
+          actions.append(refund, note);
+        } else {
+          actions.className = 'text-end text-secondary';
+          actions.textContent = '—';
         }
-        row.append(source);
+        row.append(actions);
         txRows.append(row);
       }
 
@@ -275,7 +289,7 @@ export const payoutsPage = `<!doctype html>
             txStatus.textContent = 'No transactions yet. Create and pay a sandbox checkout above.';
             return;
           }
-          for (const tx of list) renderTransaction(tx);
+          for (const tx of list) renderTransaction(tx, request, attempt);
           txCount.textContent = list.length + (list.length === 1 ? ' transaction' : ' transactions');
           txStatusBody.classList.add('hidden');
           txWrap.classList.remove('hidden');
