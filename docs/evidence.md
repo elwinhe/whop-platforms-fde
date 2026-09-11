@@ -40,6 +40,8 @@ Loom: https://www.loom.com/share/4fbae36c7b1448d182a47a9ef31ccf8e
 - **Fee reversal**: $2.00 platform → US seller (`ctt_lkqCY3fAp0zUuM`); platform available dropped exactly the fee. Whop does not claw back the application fee on refund — making the seller whole is an explicit transfer, and Whop's own $1.25 processing fee is not recoverable.
 - **Settled ledger**: the refund consumed exactly the $25.00 funding transfer, leaving the seller's available at $2.00 (the fee reversal). A transient −$25.00 available reading during refund processing resolved on its own. The refunded sale's $21.75 still lists as a pending settlement; expect it to net out on settlement day.
 - Seller transactions view shows the complete story in three rows: the refunded sale ($25.00 gross / $2.00 fee / $21.75 net) and both incoming transfers.
+- **Brazil transfer**: $2.00 platform → BR seller (`ctt_US2rIVTaUF6CJ9`) via `transfers.create`, demonstrating parent-to-child movement of a seller share; BR available went $0.00 → $2.00.
+- **Refund-rerun funding**: $26.00 platform → US seller (`ctt_35CpNLkEs8bXw9`, succeeded); US available $2.00 → $28.00, covering a fresh $25.00 refund with buffer before the sale settles.
 
 ## Sandbox-only blockers
 
