@@ -116,9 +116,9 @@ function redact(value: unknown): unknown {
   );
 }
 
-function requireId(value: string | undefined, prefix: string): string {
-  if (!value || !new RegExp(`^${prefix}_[A-Za-z0-9]+$`).test(value)) {
-    throw new Error(`Expected a ${prefix}_ ID`);
+function requireId(value: string | undefined, ...prefixes: string[]): string {
+  if (!value || !new RegExp(`^(${prefixes.join("|")})_[A-Za-z0-9]+$`).test(value)) {
+    throw new Error(`Expected a ${prefixes.map(prefix => `${prefix}_`).join(" or ")} ID`);
   }
   return value;
 }
@@ -127,11 +127,11 @@ type WriteKind = "checkout" | "transfer" | "refund";
 
 const writeResources: Record<
   WriteKind,
-  { idPrefix: string; resource: string }
+  { idPrefixes: string[]; resource: string }
 > = {
-  checkout: { idPrefix: "ch", resource: "checkout_configurations" },
-  transfer: { idPrefix: "tr", resource: "transfers" },
-  refund: { idPrefix: "pay", resource: "payments" },
+  checkout: { idPrefixes: ["ch"], resource: "checkout_configurations" },
+  transfer: { idPrefixes: ["ctt", "tr"], resource: "transfers" },
+  refund: { idPrefixes: ["pay"], resource: "payments" },
 };
 
 type PlannedOperation = {
@@ -236,8 +236,7 @@ function planCommand(args: string[], apply: boolean): Plan {
     (args.length === 2 || args.length === 3) &&
     !apply
   ) {
-    if (order && !/^(pay|tr)_[A-Za-z0-9]+$/.test(order))
-      throw new Error("Expected a pay_ or tr_ ID");
+    if (order) requireId(order, "pay", ...writeResources.transfer.idPrefixes);
     return {
       command,
       target,
@@ -336,13 +335,13 @@ async function main() {
   async function write<K extends WriteKind>(
     planned: Extract<PlannedOperation, { kind: K }>,
   ): Promise<Operations[K]["response"]> {
-    const { idPrefix, resource } = writeResources[planned.kind];
+    const { idPrefixes, resource } = writeResources[planned.kind];
     return runOperation({
       orderKey: planned.orderKey,
       fingerprint: JSON.stringify({ path, payload: planned.body, key }),
       create: () => request(planned.kind, path, planned.body),
       retrieve: (id) => {
-        requireId(id, idPrefix);
+        requireId(id, ...idPrefixes);
         return request(planned.kind, `${resource}/${id}`);
       },
     });
