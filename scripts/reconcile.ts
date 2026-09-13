@@ -25,7 +25,8 @@ function normalize(type: "payment"|"transfer", row: Record<string, unknown>): Re
   const money = isObject(row.total) ? row.total : null;
   const currency = typeof money?.currency === "string" ? money.currency.toLowerCase() : typeof row.currency === "string" ? row.currency.toLowerCase() : null;
   const decimals = typeof money?.decimals === "number" ? money.decimals : currency ? currencyMinorDigits(currency) : 2;
-  return { resource_type: type, resource_id: row.id, amount_minor: majorToMinor(money?.amount ?? row.amount, decimals), currency, status: typeof row.status === "string" ? row.status : "unknown" };
+  const amount = money ? money.amount ?? row.amount : row.total ?? row.amount;
+  return { resource_type: type, resource_id: row.id, amount_minor: majorToMinor(amount, decimals), currency, status: typeof row.status === "string" ? row.status : "unknown" };
 }
 async function main() {
   const args = process.argv.slice(2);
@@ -47,7 +48,13 @@ async function main() {
   const missingLocal: RecordRow[] = [], missingRemote: RecordRow[] = [], mismatched: { local: RecordRow; remote: RecordRow; fields: string[] }[] = [];
   for (const [key,remote] of remoteMap) {
     const own = localMap.get(key); if (!own) missingLocal.push(remote);
-    else { const fields = (["amount_minor","currency","status"] as const).filter(field => own[field] !== remote[field]); if (fields.length) mismatched.push({ local: own, remote, fields: [...fields] }); }
+    else {
+      const fields = (["amount_minor", "currency", "status"] as const).filter(
+        field => own[field] !== remote[field] ||
+          (field === "amount_minor" && (own[field] === null || remote[field] === null)),
+      );
+      if (fields.length) mismatched.push({ local: own, remote, fields });
+    }
   }
   for (const [key,own] of localMap) if (!remoteMap.has(key)) missingRemote.push(own);
   const sort = (a: RecordRow,b: RecordRow) => `${a.resource_type}:${a.resource_id}`.localeCompare(`${b.resource_type}:${b.resource_id}`);
